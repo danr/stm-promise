@@ -1,8 +1,12 @@
 language: haskell
 
 install:
+    - sudo apt-get -q -y install hlint
     - cabal configure -fWerror --enable-tests
     - cabal build
+
+script:
+    - cabal test && hlint Control
 
 notifications:
     irc:
