@@ -63,7 +63,7 @@ processPromise cmd args input = do
                     void $ evaluate (length err)
                     hClose errh
                     ex <- waitForProcess pid
-                    atomically $ writeTVar result_var $ An $ ProcessResult
+                    atomically $ writeTVar result_var $ An ProcessResult
                         { stderr = err
                         , stdout = output
                         , excode = ex
@@ -77,7 +77,7 @@ processPromise cmd args input = do
                     terminateProcess pid
                     void (waitForProcess pid)
                 )
-            atomically $ writeTVar result_var $ Cancelled
+            atomically $ writeTVar result_var Cancelled
 
         result = readTVar result_var
 
