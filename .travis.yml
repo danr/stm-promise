@@ -1,1 +1,13 @@
 language: haskell
+
+install:
+    - cabal configure -fWerror --enable-tests
+    - cabal build
+
+notifications:
+    irc:
+        channels:
+            - "irc.freenode.org#danr"
+        template:
+            - "[%{build_number}] %{repository} (%{commit}): %{message}"
+            - "Build details: %{build_url}"
