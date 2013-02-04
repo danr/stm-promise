@@ -1,5 +1,6 @@
 {-# LANGUAGE RecordWildCards #-}
-module Control.Concurrent.STM.Promise.Process (processPromise, ProcessResult(..)) where
+module Control.Concurrent.STM.Promise.Process
+    (processPromise, ProcessResult(..), ExitCode(..)) where
 
 import Control.Monad
 import Control.Monad.STM

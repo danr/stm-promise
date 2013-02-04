@@ -8,8 +8,6 @@ module Control.Concurrent.STM.Promise
 
 import Control.Monad.STM
 
-import Data.Maybe (listToMaybe)
-
 data Promise a = Promise
     { spawn  :: IO ()
     , cancel :: IO ()
@@ -35,8 +33,11 @@ isCancelled :: PromiseResult a -> Bool
 isCancelled Cancelled{} = True
 isCancelled _           = False
 
-anyResult :: [PromiseResult a] -> Maybe (PromiseResult a)
-anyResult = listToMaybe . filter isAn
+anyResult :: [PromiseResult a] -> PromiseResult a
+anyResult rs
+    | r:_ <- filter isAn rs = r
+    | all isCancelled rs    = Cancelled
+    | otherwise             = Unfinished
 
 allResults :: [PromiseResult a] -> PromiseResult [a]
 allResults rs
