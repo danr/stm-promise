@@ -1,6 +1,6 @@
 {-# LANGUAGE DeriveFunctor #-}
 module Control.Concurrent.STM.Promise
-    ( Promise(..)
+    ( Promise(..), an
     , PromiseResult(..)
     , isAn, isUnfinished, isCancelled
     , eitherResult, bothResults, bothResultsSemigroup

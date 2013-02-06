@@ -6,12 +6,5 @@ install:
     - cabal build
 
 script:
-    - cabal test && hlint Control
+    - cabal test && hlint Control test
 
-notifications:
-    irc:
-        channels:
-            - "irc.freenode.org#danr"
-        template:
-            - "[%{build_number}] %{repository} (%{commit}): %{message}"
-            - "Build details: %{build_url}"

@@ -7,7 +7,6 @@ import Control.Concurrent
 import Control.Concurrent.STM
 import Control.Concurrent.STM.DTVar
 import Control.Concurrent.STM.Promise
-import Control.Applicative
 import Data.Semigroup
 import Data.Typeable
 import Data.Traversable
@@ -28,9 +27,9 @@ requireAny :: [Tree a] -> Tree a
 requireAny = foldr1 (Node Either)
 
 showTree :: Show a => Tree a -> String
-showTree = go 2
+showTree = go (2 :: Int)
   where
-    go n (Leaf a)            = show a
+    go _ (Leaf a)            = show a
     go n (Node Both   t1 t2) = (n < 1) ? par $ go 1 t1 ++ " & " ++ go 1 t2
     go n (Node Either t1 t2) = (n < 2) ? par $ go 2 t1 ++ " | " ++ go 2 t2
 
@@ -70,9 +69,9 @@ watchTree t = case t of
         d1 <- watchTree t1
         d2 <- watchTree t2
 
-        init <- liftM2 (Node lbl) (readDTVarIO d1) (readDTVarIO d2)
+        init_tree <- liftM2 (Node lbl) (readDTVarIO d1) (readDTVarIO d2)
 
-        forkWrapTVar init $ \ write -> fix $ \ loop -> do
+        forkWrapTVar init_tree $ \ write -> fix $ \ loop -> do
 
             [r1,r2] <- listenDTVarsIO [d1,d2]
 
@@ -89,8 +88,8 @@ watchTree t = case t of
                     cancelTree t
 
 forkWrapTVar :: Tree (PromiseResult a) -> ((Tree (PromiseResult a) -> STM ()) -> IO ()) -> IO (DTVar (Tree (PromiseResult a)))
-forkWrapTVar init mk = do
-    v <- newDTVarIO init
-    forkIO $ mk (writeDTVar v)
+forkWrapTVar init_tree mk = do
+    v <- newDTVarIO init_tree
+    void $ forkIO $ mk (writeDTVar v)
     return v
 
