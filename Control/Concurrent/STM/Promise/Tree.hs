@@ -1,4 +1,4 @@
-{-# LANGUAGE DeriveFunctor, DeriveDataTypeable, DeriveTraversable, DeriveFoldable #-}
+{-# LANGUAGE DeriveFunctor, DeriveDataTypeable, DeriveTraversable, DeriveFoldable, RecordWildCards #-}
 module Control.Concurrent.STM.Promise.Tree where
 
 import Control.Monad hiding (mapM_)
@@ -13,7 +13,9 @@ import Data.Traversable
 import Data.Foldable
 import Data.Function
 
-data Label = Both | Either
+(.:) = (.) . (.)
+
+data Label = Both | Either | Many
   deriving (Eq, Ord, Show, Typeable)
 
 -- Both/Either-trees
@@ -30,6 +32,7 @@ showTree :: Show a => Tree a -> String
 showTree = go (2 :: Int)
   where
     go _ (Leaf a)            = show a
+    go n (Node Many   t1 t2) = (n < 0) ? par $ go 0 t1 ++ " , " ++ go 0 t2
     go n (Node Both   t1 t2) = (n < 1) ? par $ go 1 t1 ++ " & " ++ go 1 t2
     go n (Node Either t1 t2) = (n < 2) ? par $ go 2 t1 ++ " | " ++ go 2 t2
 
@@ -43,49 +46,56 @@ cancelTree = mapM_ spawn
 
 interleave :: Tree a -> [a]
 interleave (Leaf a)            = return a
-interleave (Node Both t1 t2)   = interleave t1 ++ interleave t2
 interleave (Node Either t1 t2) = interleave t1 /\/ interleave t2
+interleave (Node _ t1 t2)      = interleave t1 ++ interleave t2
 
 (/\/) :: [a] -> [a] -> [a]
 (x:xs) /\/ ys = x:(ys /\/ xs)
 []     /\/ ys = ys
 
-watchTree :: Semigroup a => Tree (Promise a) -> IO (DTVar (Tree (PromiseResult a)))
-watchTree t = case t of
+data WatchConfig a = WatchConfig
+    { combine_both :: a -> a -> a
+    , combine_many :: Either a (a,a) -> a
+    }
 
-    Leaf a ->
+watchTree :: WatchConfig a -> Tree (Promise a) -> IO (DTVar (Tree (PromiseResult a)))
+watchTree WatchConfig{..} = go where
+    go t = case t of
 
-        forkWrapTVar (Leaf Unfinished) $ \ write -> atomically $ do
-            r <- result a
-            when (isUnfinished r) retry
-            write (Leaf r)
+        Leaf a ->
 
-    Node lbl t1 t2 -> do
+            forkWrapTVar (Leaf Unfinished) $ \ write -> atomically $ do
+                r <- result a
+                when (isUnfinished r) retry
+                write (Leaf r)
 
-        let combine = case lbl of
-                Both   -> bothResultsSemigroup
-                Either -> eitherResult
+        Node lbl t1 t2 -> do
 
-        d1 <- watchTree t1
-        d2 <- watchTree t2
+            let combine = case lbl of
+                    Both   -> fmap (uncurry combine_both) .: bothResults
+                    Either -> eitherResult
+                    Many   -> fmap combine_many .: manyResults
 
-        init_tree <- liftM2 (Node lbl) (readDTVarIO d1) (readDTVarIO d2)
+            d1 <- go t1
+            d2 <- go t2
 
-        forkWrapTVar init_tree $ \ write -> fix $ \ loop -> do
+            init_tree <- liftM2 (Node lbl) (readDTVarIO d1) (readDTVarIO d2)
 
-            [r1,r2] <- listenDTVarsIO [d1,d2]
+            forkWrapTVar init_tree $ \ write -> fix $ \ loop -> do
 
-            let r = case (r1,r2) of
-                        (Leaf a,Leaf b) -> combine a b
-                        _               -> Unfinished
+                [r1,r2] <- listenDTVarsIO [d1,d2]
 
-            if isUnfinished r
-                then do
-                    atomically $ write (Node lbl r1 r2)
-                    loop
-                else do
-                    atomically $ write (Leaf r)
-                    cancelTree t
+                let r = case (r1,r2) of
+                            (Leaf a,Leaf b) -> combine a b
+                            _               -> Unfinished
+
+                if isUnfinished r
+                    then do
+                        atomically $ write (Node lbl r1 r2)
+                        loop
+                    else do
+                        atomically $ write (Leaf r)
+                        cancelTree t
 
 forkWrapTVar :: Tree (PromiseResult a) -> ((Tree (PromiseResult a) -> STM ()) -> IO ()) -> IO (DTVar (Tree (PromiseResult a)))
 forkWrapTVar init_tree mk = do

@@ -3,11 +3,10 @@ module Control.Concurrent.STM.Promise
     ( Promise(..), an
     , PromiseResult(..)
     , isAn, isUnfinished, isCancelled
-    , eitherResult, bothResults, bothResultsSemigroup
+    , eitherResult, bothResults, manyResults
     ) where
 
 import Control.Monad.STM
-import Data.Semigroup
 
 data Promise a = Promise
     { spawn  :: IO ()
@@ -40,7 +39,7 @@ isCancelled _           = False
 
 eitherResult :: PromiseResult a -> PromiseResult a -> PromiseResult a
 eitherResult (An a)     _          = An a
-eitherResult _          (An a)     = An a
+eitherResult _          (An e)     = An e
 eitherResult Unfinished _          = Unfinished
 eitherResult _          Unfinished = Unfinished
 eitherResult _          _          = Cancelled
@@ -51,7 +50,11 @@ bothResults Cancelled _         = Cancelled
 bothResults _         Cancelled = Cancelled
 bothResults _         _         = Unfinished
 
-bothResultsSemigroup :: Semigroup a =>
-                        PromiseResult a -> PromiseResult a -> PromiseResult a
-bothResultsSemigroup a b = fmap (uncurry (<>)) (bothResults a b)
+manyResults :: PromiseResult a -> PromiseResult a -> PromiseResult (Either a (a,a))
+manyResults (An a)     (An e)     = An $ Right (a,e)
+manyResults (An a)     _          = An $ Left a
+manyResults _          (An e)     = An $ Left e
+manyResults Unfinished _          = Unfinished
+manyResults _          Unfinished = Unfinished
+manyResults _          _          = Cancelled
 
