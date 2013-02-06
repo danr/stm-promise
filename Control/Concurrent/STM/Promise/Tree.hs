@@ -1,78 +1,96 @@
-{-# LANGUAGE DeriveFunctor, DeriveDataTypeable #-}
+{-# LANGUAGE DeriveFunctor, DeriveDataTypeable, DeriveTraversable, DeriveFoldable #-}
 module Control.Concurrent.STM.Promise.Tree where
 
+import Control.Monad hiding (mapM_)
+import Prelude hiding (mapM_, foldr1)
 import Control.Concurrent
-import Control.Concurrent.STM.Promise
-import Control.Monad
-import Control.Applicative
-import Control.Concurrent.STM.TVar
 import Control.Concurrent.STM
-import Data.Monoid
+import Control.Concurrent.STM.DTVar
+import Control.Concurrent.STM.Promise
+import Control.Applicative
+import Data.Semigroup
 import Data.Typeable
+import Data.Traversable
+import Data.Foldable
+import Data.Function
 
--- Labelled trees
-data Tree a = And [Tree a] | Or [Tree a] | Leaf a
-  deriving (Eq, Ord, Show, Typeable, Functor)
+data Label = Both | Either
+  deriving (Eq, Ord, Show, Typeable)
 
-spawnTree :: Tree (Promise a) -> IO ()
-spawnTree (And ps) = mapM_ spawnTree ps
-spawnTree (Or ps)  = mapM_ spawnTree ps
-spawnTree (Leaf a) = spawn a
+-- Both/Either-trees
+data Tree a = Node Label (Tree a) (Tree a) | Leaf a
+  deriving (Eq, Ord, Show, Typeable, Traversable, Foldable, Functor)
+
+requireAll :: [Tree a] -> Tree a
+requireAll = foldr1 (Node Both)
+
+requireAny :: [Tree a] -> Tree a
+requireAny = foldr1 (Node Either)
+
+showTree :: Show a => Tree a -> String
+showTree = go 2
+  where
+    go n (Leaf a)            = show a
+    go n (Node Both   t1 t2) = (n < 1) ? par $ go 1 t1 ++ " & " ++ go 1 t2
+    go n (Node Either t1 t2) = (n < 2) ? par $ go 2 t1 ++ " | " ++ go 2 t2
+
+    par = ('(':) . (++")")
+
+    True  ? f = f
+    False ? _ = id
 
 cancelTree :: Tree (Promise a) -> IO ()
-cancelTree (And ps) = mapM_ cancelTree ps
-cancelTree (Or ps)  = mapM_ cancelTree ps
-cancelTree (Leaf a) = cancel a
+cancelTree = mapM_ spawn
 
-unleaf :: [Tree a] -> Maybe [a]
-unleaf []          = Just []
-unleaf (Leaf x:xs) = (x:) <$> unleaf xs
-unleaf _           = Nothing
+interleave :: Tree a -> [a]
+interleave (Leaf a)            = return a
+interleave (Node Both t1 t2)   = interleave t1 ++ interleave t2
+interleave (Node Either t1 t2) = interleave t1 /\/ interleave t2
 
-promises :: Tree (Promise a) -> [Promise a]
-promises (Leaf a) = [a]
-promises (And ts) = concatMap promises ts
-promises (Or ts)  = concatMap promises ts
+(/\/) :: [a] -> [a] -> [a]
+(x:xs) /\/ ys = x:(ys /\/ xs)
+[]     /\/ ys = ys
 
--- the mysterious TVar Integer is an experiment to watch changes in the nodes further down... hmm
--- maybe watchTree should return this integer instead, and we could watch for changes on it instead.
--- the goal is to be able to watch this tree as it updates. that would be nice
-watchTree :: Monoid a => TVar Integer -> Tree (Promise a) -> IO (TVar (Tree (PromiseResult a)))
-watchTree ws t = case t of
+watchTree :: Semigroup a => Tree (Promise a) -> IO (DTVar (Tree (PromiseResult a)))
+watchTree t = case t of
 
     Leaf a ->
-        forkWrapTVar ws $ \ write -> atomically $ do
+
+        forkWrapTVar (Leaf Unfinished) $ \ write -> atomically $ do
             r <- result a
             when (isUnfinished r) retry
-            write r
+            write (Leaf r)
 
-    And ts -> watchTrees (fmap mconcat . allResults) ts
+    Node lbl t1 t2 -> do
 
-    Or ts -> watchTrees anyResult ts
+        let combine = case lbl of
+                Both   -> bothResultsSemigroup
+                Either -> eitherResult
 
-  where
+        d1 <- watchTree t1
+        d2 <- watchTree t2
 
-    watchTrees k ts = do
-        ts' <- mapM (watchTree ws) ts
-        forkWrapTVar ws $ \ write -> do
-            atomically $ do
+        init <- liftM2 (Node lbl) (readDTVarIO d1) (readDTVarIO d2)
 
-                let interpret Nothing   = Unfinished
-                    interpret (Just rs) = k rs
+        forkWrapTVar init $ \ write -> fix $ \ loop -> do
 
-                r <- interpret . unleaf <$> mapM readTVar ts'
-                -- I would like to write AND retry here
-                when (isUnfinished r) retry
-                write r
+            [r1,r2] <- listenDTVarsIO [d1,d2]
 
-            cancelTree t
+            let r = case (r1,r2) of
+                        (Leaf a,Leaf b) -> combine a b
+                        _               -> Unfinished
 
+            if isUnfinished r
+                then do
+                    atomically $ write (Node lbl r1 r2)
+                    loop
+                else do
+                    atomically $ write (Leaf r)
+                    cancelTree t
 
-forkWrapTVar :: TVar Integer -> ((PromiseResult a -> STM ()) -> IO ()) -> IO (TVar (Tree (PromiseResult a)))
-forkWrapTVar w mk = do
-    v <- newTVarIO (Leaf Unfinished)
-    forkIO $ mk $ \ x -> do
-        writeTVar v (Leaf x)
-        modifyTVar w succ
+forkWrapTVar :: Tree (PromiseResult a) -> ((Tree (PromiseResult a) -> STM ()) -> IO ()) -> IO (DTVar (Tree (PromiseResult a)))
+forkWrapTVar init mk = do
+    v <- newDTVarIO init
+    forkIO $ mk (writeDTVar v)
     return v
 

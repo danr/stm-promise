@@ -3,10 +3,11 @@ module Control.Concurrent.STM.Promise
     ( Promise(..)
     , PromiseResult(..)
     , isAn, isUnfinished, isCancelled
-    , anyResult, allResults
+    , eitherResult, bothResults, bothResultsSemigroup
     ) where
 
 import Control.Monad.STM
+import Data.Semigroup
 
 data Promise a = Promise
     { spawn  :: IO ()
@@ -18,8 +19,12 @@ data Promise a = Promise
 data PromiseResult a
     = Unfinished
     | Cancelled
-    | An { an :: a }
+    | An a
   deriving (Functor, Eq, Ord, Show)
+
+an :: PromiseResult a -> a
+an (An a) = a
+an _      = error "an: on non-An result!"
 
 isAn :: PromiseResult a -> Bool
 isAn An{} = True
@@ -33,15 +38,20 @@ isCancelled :: PromiseResult a -> Bool
 isCancelled Cancelled{} = True
 isCancelled _           = False
 
-anyResult :: [PromiseResult a] -> PromiseResult a
-anyResult rs
-    | r:_ <- filter isAn rs = r
-    | all isCancelled rs    = Cancelled
-    | otherwise             = Unfinished
+eitherResult :: PromiseResult a -> PromiseResult a -> PromiseResult a
+eitherResult (An a)     _          = An a
+eitherResult _          (An a)     = An a
+eitherResult Unfinished _          = Unfinished
+eitherResult _          Unfinished = Unfinished
+eitherResult _          _          = Cancelled
 
-allResults :: [PromiseResult a] -> PromiseResult [a]
-allResults rs
-    | any isCancelled  rs = Cancelled
-    | any isUnfinished rs = Unfinished
-    | otherwise           = An (map an rs)
+bothResults :: PromiseResult a -> PromiseResult a -> PromiseResult (a,a)
+bothResults (An a)    (An e)    = An (a,e)
+bothResults Cancelled _         = Cancelled
+bothResults _         Cancelled = Cancelled
+bothResults _         _         = Unfinished
+
+bothResultsSemigroup :: Semigroup a =>
+                        PromiseResult a -> PromiseResult a -> PromiseResult a
+bothResultsSemigroup a b = fmap (uncurry (<>)) (bothResults a b)
 

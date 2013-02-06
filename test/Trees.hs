@@ -5,31 +5,34 @@ import Control.Concurrent
 import Control.Concurrent.STM
 import Control.Concurrent.STM.Promise
 import Control.Concurrent.STM.Promise.Tree
-import Control.Concurrent.STM.TVar
+import Control.Concurrent.STM.DTVar
 import Control.Monad
 import Data.Function
-import Data.Monoid
+import Data.List
+import Data.Maybe
+import Data.IORef
+import Data.Semigroup
 import Test.Feat
 import Test.QuickCheck
 import Test.QuickCheck.Monadic
 import Test.QuickCheck.Modifiers
 
-eval :: Tree Bool -> Bool
-eval (Leaf x) = x
-eval (And xs) = all eval xs
-eval (Or xs)  = any eval xs
+eval :: (Semigroup a,Ord a) => Tree a -> [a]
+eval (Leaf x)            = return x
+eval (Node Both t1 t2)   = (<>) <$> eval t1 <*> eval t2
+eval (Node Either t1 t2) = eval t1 ++ eval t2
 
+deriveEnumerable ''Label
 deriveEnumerable ''Tree
 
 instance Enumerable a => Arbitrary (Tree a) where
     arbitrary = sized uniform
 
-instance Monoid Bool where
-    mempty  = False
-    mappend = (&&)
+instance Semigroup Int where
+    (<>) = (+)
 
-boolPromise :: Bool -> Int -> IO (Promise Bool)
-boolPromise b t = do
+delayPromise :: a -> Int -> IO (Promise a)
+delayPromise b t = do
 
     res_var <- newTVarIO Unfinished
 
@@ -47,30 +50,26 @@ boolPromise b t = do
 
     return Promise{..}
 
+maybeIO :: Maybe a -> (a -> IO b) -> IO (Maybe b)
+maybeIO m f = maybe (return Nothing) (fmap Just . f) m
+
 worker :: Maybe Int -> TChan (Promise a) -> IO ()
 worker m_t ch = fix $ \ loop -> do
     m_promise <- atomically $ tryReadTChan ch
     case m_promise of
         Nothing -> return ()
         Just promise -> do
+            m_thr <- maybeIO m_t $ \ timeout -> forkIO $ do
+                threadDelay timeout
+                cancel promise
+
             spawn promise
 
-            -- Wait until promise is completed, and cancel it after the timeout
-            -- if it is given
-            timeout_var <- case m_t of
-                Just timeout -> registerDelay timeout
-                Nothing -> newTVarIO False
-
-            perform_cancel <- atomically $ do
+            atomically $ do
                 status <- result promise
-                timed_out <- readTVar timeout_var
-                case () of
-                    _ | timed_out -> return True
-                      | isUnfinished status -> retry
-                      | otherwise -> return False
-                        -- ^ either cancelled or An a
+                when (isUnfinished status) retry
 
-            when perform_cancel (cancel promise)
+            void $ maybeIO m_thr killThread
 
             loop
 
@@ -82,42 +81,40 @@ workers m_t n xs = do
     atomically $ mapM_ (writeTChan ch) xs
     replicateM_ n $ forkIO $ worker m_t ch
 
-mkPromiseTree :: Int -> Tree Bool -> Gen (IO (Tree (Promise Bool)))
+mkPromiseTree :: Arbitrary a => Int -> Tree a -> Gen (IO (Tree (Promise a)))
 mkPromiseTree timeout = go where
     go t = case t of
         Leaf b -> do
-            t <- choose (0,timeout-1)
-            return $ Leaf <$> boolPromise b t
-        And bs -> go' And bs
-        Or bs  -> go' Or bs
+            t <- choose (0,timeout * 2)
+            return $ Leaf <$> delayPromise b t
+        Node lbl t1 t2 -> liftM2 (Node lbl) <$> go t1 <*> go t2
 
-    go' mk bs = do
-        trees <- mapM go bs
-        return (mk <$> sequence trees)
-
-prop_equal :: Int -> Int -> Tree Bool -> Property
-prop_equal cores timeout tree = monadicIO $
-    forAllM (Blind <$> mkPromiseTree timeout tree) $ \ (Blind io_promise_tree) -> run $ do
+prop_equal :: IO () -> IO () -> Int -> Int -> Tree Int -> Property
+prop_equal add_test add_cancelled cores timeout tree = do
+    io_promise_tree <- mkPromiseTree timeout tree
+    monadicIO $ assert <=< run $ do
         putStrLn "== New test =="
-        ws <- newTVarIO 0
+        putStrLn (showTree tree)
+        putStrLn $ "queue order: " ++ show (interleave tree)
+        putStrLn $ "evaluations: " ++ show (eval tree)
         promise_tree <- io_promise_tree
-        workers (Just timeout) cores (promises promise_tree)
-        tree_var <- watchTree ws promise_tree
-        forkIO $ fix (\ loop old -> do
-            (v,t) <- atomically $ do
-                v <- readTVar ws
-                if v == old then retry else return v
-                (,) v <$> readTVar tree_var
-            putStrLn $ show v ++ ": " ++ show t
-            loop v) $ 0
-        atomically $ do
-            x <- readTVar tree_var
-            case x of
-                Leaf Unfinished -> retry
-                Leaf (An b) -> return $ b == eval tree
-                Leaf Cancelled -> return False
-                _ -> retry
+        workers (Just timeout) cores (interleave promise_tree)
+        tree_dtvar <- watchTree promise_tree
+        fix $ \ loop -> do
+            t <- listenDTVarIO tree_dtvar
+            putStrLn (showTree t)
+            case t of
+                Leaf Unfinished -> loop
+                Leaf (An b) -> add_test >> return (b `elem` eval tree)
+                Leaf Cancelled -> add_test >> add_cancelled >> return True
+                _ -> loop
 
 main :: IO ()
-main = quickCheck (prop_equal 10 1000000)
+main = do
+    cancelled <- newIORef 0
+    tests <- newIORef 0
+    quickCheck (prop_equal (modifyIORef tests succ) (modifyIORef cancelled succ) 10 10000)
+    ts <- readIORef tests
+    cs <- readIORef cancelled
+    putStrLn $ show ts ++ " tests, " ++ show cs ++ " cancelled."
 
