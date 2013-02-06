@@ -1,5 +1,5 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
-{-# LANGUAGE RecordWildCards, TemplateHaskell, RecordWildCards #-}
+{-# LANGUAGE RecordWildCards, TemplateHaskell, RecordWildCards, GeneralizedNewtypeDeriving, DeriveDataTypeable #-}
 
 import Control.Applicative
 import Control.Concurrent
@@ -12,7 +12,8 @@ import Data.List
 import Data.Ord
 import Data.Function
 import Data.IORef
-import Data.Semigroup
+import Data.Typeable
+import Data.Monoid
 import System.Exit
 import Test.Feat
 import Test.QuickCheck
@@ -22,29 +23,24 @@ import Test.QuickCheck.Test
 nubSorted :: Ord a => [a] -> [a]
 nubSorted = map head . group . sort
 
-expensiveConfig :: WatchConfig [[a]]
-expensiveConfig = WatchConfig
-    { combine_both = \ xs ys -> (++) <$> xs <*> ys
-    , combine_many = either id (uncurry (++))
-    }
+newtype Desc a = Desc [[a]]
+  deriving (Eq,Ord,Show,Arbitrary,Enumerable,Typeable)
 
-simpleConfig :: WatchConfig Int
-simpleConfig = WatchConfig
-    { combine_both = min
-    , combine_many = either id (uncurry max)
-    }
+instance Monoid (Desc a) where
+    mempty                        = Desc $ [[]]
+    mappend (Desc xss) (Desc yss) = Desc $ (++) <$> xss <*> yss
 
-eval :: Ord a => WatchConfig a -> Tree a -> [a]
-eval WatchConfig{..} = go where
+instance Monoid Int where
+    mempty  = 0
+    mappend = (+)
+
+eval :: (Ord a,Monoid a) => Tree a -> [a]
+eval = go where
     go t = case t of
         Leaf x            -> return x
-        Node Both t1 t2   -> nubSorted $ combine_both <$> go t1 <*> go t2
-        Node Either t1 t2 -> go t1 `union` go t2
-        Node Many t1 t2   -> nubSorted $ do
-            e1 <- go t1
-            e2 <- go t2
-            u <- [Left e1,Left e2,Right (e1,e2)]
-            return $ combine_many u
+        Node Both t1 t2   -> nubSorted $ mappend <$> go t1 <*> go t2
+        Node Either t1 t2 -> nubSorted $ go t1 ++ go t2
+        Recoverable t     -> insert mempty (go t)
 
 deriveEnumerable ''Label
 deriveEnumerable ''Tree
@@ -109,46 +105,46 @@ mkPromiseTree timeout = go where
             to <- choose (0,timeout * 2)
             return $ Leaf <$> delayPromise b to
         Node lbl t1 t2 -> liftM2 (Node lbl) <$> go t1 <*> go t2
+        Recoverable t' -> liftM Recoverable <$> go t'
 
-prop_equal :: (Enumerable a,Show a,Ord a,Arbitrary a) =>
-              WatchConfig a -> IO () -> IO () -> Int -> Int -> Tree a -> Property
-prop_equal config add_test add_cancelled cores timeout tree = do
+prop_equal :: (Enumerable a,Show a,Ord a,Arbitrary a,Monoid a) =>
+              a -> IO () -> IO () -> Int -> Int -> Tree a -> Property
+prop_equal _ add_test add_cancelled cores timeout tree = do
     io_promise_tree <- mkPromiseTree timeout tree
     monadicIO $ assert <=< run $ do
         putStrLn "== New test =="
         putStrLn (showTree tree)
         putStrLn $ "queue order: " ++ show (interleave tree)
-        putStrLn $ "evaluations: " ++ show (eval config tree)
+        putStrLn $ "evaluations: " ++ show (eval tree)
         promise_tree <- io_promise_tree
         workers (Just timeout) cores (interleave promise_tree)
-        tree_dtvar <- watchTree config promise_tree
+        tree_dtvar <- watchTree promise_tree
         fix $ \ loop -> do
             t <- listenDTVarIO tree_dtvar
-            -- putStrLn (showTree t)
+            putStrLn (showTree t)
             case t of
                 Leaf Unfinished -> loop
-                Leaf (An b) -> add_test >> return (b `elem` eval config tree)
+                Leaf (An b) -> add_test >> return (b `elem` eval tree)
                 Leaf Cancelled -> add_test >> add_cancelled >> return True
                 _ -> loop
 
-runTest :: (Enumerable a,Show a,Ord a,Arbitrary a) =>
-           Int -> WatchConfig a -> IO Bool
-runTest size config = do
+runTest :: (Enumerable a,Show a,Ord a,Arbitrary a,Monoid a) => a -> Int -> IO ((Int,Int),Bool)
+runTest a size = do
     cancelled <- newIORef (0 :: Int)
     tests <- newIORef (0 :: Int)
     res <- quickCheckWithResult stdArgs { maxSuccess = size, maxSize = size }
-        (prop_equal config (modifyIORef tests succ) (modifyIORef cancelled succ) 10 10000)
+        (prop_equal a (modifyIORef tests succ) (modifyIORef cancelled succ) 10 10000)
     ts <- readIORef tests
     cs <- readIORef cancelled
-    putStrLn $ show ts ++ " tests, " ++ show cs ++ " cancelled."
-    return $ isSuccess res
+    return $ ((ts,cs),isSuccess res)
 
 
 main :: IO ()
 main = do
-    tests <- sequence $
-        [ runTest 200 (expensiveConfig :: WatchConfig [[Int]])
-        , runTest 500 (simpleConfig :: WatchConfig Int)
+    (times,tests) <- unzip <$> sequence
+      -- [ runTest (undefined :: Desc Int) 20
+         [ runTest (undefined :: Int) 200
         ]
+    forM_ times $ \(ts,cs) -> putStrLn $ show ts ++ " tests, " ++ show cs ++ " cancelled."
     unless (and tests) exitFailure
 
