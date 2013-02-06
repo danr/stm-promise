@@ -1,5 +1,5 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
-{-# LANGUAGE RecordWildCards, TemplateHaskell, RecordWildCards, GeneralizedNewtypeDeriving, DeriveDataTypeable #-}
+{-# LANGUAGE RecordWildCards, GeneralizedNewtypeDeriving, ViewPatterns #-}
 
 import Control.Applicative
 import Control.Concurrent
@@ -12,10 +12,8 @@ import Data.List
 import Data.Ord
 import Data.Function
 import Data.IORef
-import Data.Typeable
 import Data.Monoid
 import System.Exit
-import Test.Feat
 import Test.QuickCheck
 import Test.QuickCheck.Monadic
 import Test.QuickCheck.Test
@@ -23,12 +21,14 @@ import Test.QuickCheck.Test
 nubSorted :: Ord a => [a] -> [a]
 nubSorted = map head . group . sort
 
-newtype Desc a = Desc [[a]]
-  deriving (Eq,Ord,Show,Arbitrary,Enumerable,Typeable)
+newtype Desc a = Desc [a]
+  deriving (Eq,Ord,Monoid)
 
-instance Monoid (Desc a) where
-    mempty                        = Desc $ [[]]
-    mappend (Desc xss) (Desc yss) = Desc $ (++) <$> xss <*> yss
+instance Show a => Show (Desc a) where
+    show (Desc as) = show as
+
+instance Arbitrary a => Arbitrary (Desc a) where
+    arbitrary = Desc . return <$> arbitrary
 
 instance Monoid Int where
     mempty  = 0
@@ -42,11 +42,18 @@ eval = go where
         Node Either t1 t2 -> nubSorted $ go t1 ++ go t2
         Recoverable t     -> insert mempty (go t)
 
-deriveEnumerable ''Label
-deriveEnumerable ''Tree
+instance Arbitrary a => Arbitrary (Tree a) where
+    arbitrary = sized arbTree where
+        arbTree ((`div` 2) -> s) = frequency
+            [(1,Leaf <$> arbitrary)
+            ,(s,Node Both   <$> arbTree s <*> arbTree s)
+            ,(s,Node Either <$> arbTree s <*> arbTree s)
+            ,(s`div`2,attempts    <$> arbTree s <*> arbTree s)
+            ,(s`div`4,Recoverable <$> arbTree (s-1))
+            ]
+          where
+            attempts u v = Node Both (Recoverable u) (Recoverable v)
 
-instance Enumerable a => Arbitrary (Tree a) where
-    arbitrary = sized uniform
 
 delayPromise :: a -> Int -> IO (Promise a)
 delayPromise b t = do
@@ -91,7 +98,7 @@ worker m_t ch = fix $ \ loop -> do
             loop
 
 -- Evaluate these promises on n processors, using maybe a timeout in
--- microseconds
+-- microseconds. This function should be put in a library somewhere.
 workers :: Maybe Int -> Int -> [Promise a] -> IO ()
 workers m_t n xs = do
     ch <- newTChanIO
@@ -107,7 +114,7 @@ mkPromiseTree timeout = go where
         Node lbl t1 t2 -> liftM2 (Node lbl) <$> go t1 <*> go t2
         Recoverable t' -> liftM Recoverable <$> go t'
 
-prop_equal :: (Enumerable a,Show a,Ord a,Arbitrary a,Monoid a) =>
+prop_equal :: (Show a,Ord a,Arbitrary a,Monoid a) =>
               a -> IO () -> IO () -> Int -> Int -> Tree a -> Property
 prop_equal _ add_test add_cancelled cores timeout tree = do
     io_promise_tree <- mkPromiseTree timeout tree
@@ -128,11 +135,11 @@ prop_equal _ add_test add_cancelled cores timeout tree = do
                 Leaf Cancelled -> add_test >> add_cancelled >> return True
                 _ -> loop
 
-runTest :: (Enumerable a,Show a,Ord a,Arbitrary a,Monoid a) => a -> Int -> IO ((Int,Int),Bool)
+runTest :: (Show a,Ord a,Arbitrary a,Monoid a) => a -> Int -> IO ((Int,Int),Bool)
 runTest a size = do
     cancelled <- newIORef (0 :: Int)
     tests <- newIORef (0 :: Int)
-    res <- quickCheckWithResult stdArgs { maxSuccess = size, maxSize = size }
+    res <- quickCheckWithResult stdArgs { maxSuccess = 1000, maxSize = size }
         (prop_equal a (modifyIORef tests succ) (modifyIORef cancelled succ) 10 10000)
     ts <- readIORef tests
     cs <- readIORef cancelled
@@ -142,8 +149,8 @@ runTest a size = do
 main :: IO ()
 main = do
     (times,tests) <- unzip <$> sequence
-      -- [ runTest (undefined :: Desc Int) 20
-         [ runTest (undefined :: Int) 200
+        [ runTest (undefined :: Desc Int) 25
+        , runTest (undefined :: Int) 50
         ]
     forM_ times $ \(ts,cs) -> putStrLn $ show ts ++ " tests, " ++ show cs ++ " cancelled."
     unless (and tests) exitFailure
