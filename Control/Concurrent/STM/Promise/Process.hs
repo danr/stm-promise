@@ -4,6 +4,7 @@ module Control.Concurrent.STM.Promise.Process
     (processPromise, ProcessResult(..), ExitCode(..)) where
 
 import Control.Monad
+import Control.Monad.Error
 import Control.Monad.STM
 import Control.Concurrent.STM.TVar
 import Control.Concurrent.STM.Promise
@@ -32,17 +33,15 @@ processPromise
 processPromise cmd args input = do
 
     pid_var    <- newTVarIO Nothing
-    thread_var <- newTVarIO Nothing
     result_var <- newTVarIO Unfinished
-    spawned    <- newTVarIO False
+    spawn_ok   <- newTVarIO True
 
-    let spawn = do
+    let silent io = io `catchError` const (return ())
+
+        spawn = do
 
             -- Check that the process hasn't been spawned before
-            spawn_now <- atomically $ do
-                old <- readTVar spawned
-                writeTVar spawned True
-                return old
+            spawn_now <- atomically $ swapTVar spawn_ok False
 
             when spawn_now $ do
 
@@ -53,39 +52,44 @@ processPromise cmd args input = do
                          , std_err = CreatePipe
                          }
 
-                atomically $ writeTVar pid_var (Just pid)
-
-                output  <- hGetContents outh
-
-                err <- hGetContents errh
-
                 unless (null input) $ do
                     hPutStr inh input
                     hFlush inh
 
                 hClose inh
 
-                t_id <- forkIO $ do
-                    void $ evaluate (length output)
-                    hClose outh
-                    void $ evaluate (length err)
-                    hClose errh
-                    ex <- waitForProcess pid
+                atomically $ writeTVar pid_var (Just pid)
+
+                void $ forkIO $ silent $ do
+                    ex_code <- waitForProcess pid
+                    out <- hGetContents outh
+                    err <- hGetContents errh
                     atomically $ writeTVar result_var $ An ProcessResult
                         { stderr = err
-                        , stdout = output
-                        , excode = ex
+                        , stdout = out
+                        , excode = ex_code
                         }
-
-                atomically $ writeTVar thread_var (Just t_id)
+                    a <- evaluate (length out)
+                    b <- evaluate (length err)
+                    a `seq` b `seq` do
+                        hClose outh
+                        hClose errh
 
         cancel = do
-            atomically (readTVar thread_var) >>= maybe (return ()) killThread
-            atomically (readTVar pid_var) >>= maybe (return ()) (\ pid -> do
+
+            m_pid <- atomically $ do
+
+                writeTVar result_var Cancelled
+
+                writeTVar spawn_ok False
+
+                swapTVar pid_var Nothing
+
+            case m_pid of
+                Just pid -> do
                     terminateProcess pid
-                    void (waitForProcess pid)
-                )
-            atomically $ writeTVar result_var Cancelled
+                    silent $ void $ waitForProcess pid
+                Nothing  -> return ()
 
         result = readTVar result_var
 

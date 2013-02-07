@@ -46,17 +46,21 @@ instance Monad Tree where
     Node l u v >>= f    = Node l (u >>= f) (v >>= f)
     Recoverable t >>= f = Recoverable (t >>= f)
 
+ensureNonempty :: String -> [a] -> [a]
+ensureNonempty s [] = error $ s ++ ": non-empty list!"
+ensureNonempty _ xs = xs
+
 -- | All of these must succeed
 requireAll :: [Tree a] -> Tree a
-requireAll = foldr1 (Node Both)
+requireAll = foldr1 (Node Both) . ensureNonempty "requireAll"
 
 -- | Any of these must succeed
 requireAny :: [Tree a] -> Tree a
-requireAny = foldr1 (Node Either)
+requireAny = foldr1 (Node Either) . ensureNonempty "requireAny"
 
 -- | As many as possible should succeed, try all.
 tryAll :: [Tree a] -> Tree a
-tryAll = foldr1 (Node Both) . map Recoverable
+tryAll = foldr1 (Node Both) . map Recoverable . ensureNonempty "tryAll"
 
 -- | Shows a tree
 showTree :: Show a => Tree a -> String
@@ -74,7 +78,7 @@ showTree = go (2 :: Int)
 
 -- | Cancel a tree
 cancelTree :: Tree (Promise a) -> IO ()
-cancelTree = mapM_ spawn
+cancelTree = mapM_ cancel
 
 -- | A simple scheduling
 interleave :: Tree a -> [a]
