@@ -1,4 +1,5 @@
 {-# LANGUAGE RecordWildCards #-}
+-- | Promises for processes
 module Control.Concurrent.STM.Promise.Process
     (processPromise, ProcessResult(..), ExitCode(..)) where
 
@@ -14,6 +15,7 @@ import System.Process
 import System.IO
 import System.Exit
 
+-- | The result from a process
 data ProcessResult = ProcessResult
     { stderr :: String
     , stdout :: String
@@ -21,7 +23,12 @@ data ProcessResult = ProcessResult
     }
   deriving (Eq, Ord, Show)
 
-processPromise :: FilePath -> [String] -> String -> IO (Promise ProcessResult)
+-- | Make a `Promise`
+processPromise
+    :: FilePath                   -- ^ Program to run
+    -> [String]                   -- ^ Arguments
+    -> String                     -- ^ Input string (stdin)
+    -> IO (Promise ProcessResult) -- ^ Promise object
 processPromise cmd args input = do
 
     pid_var    <- newTVarIO Nothing

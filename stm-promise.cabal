@@ -29,13 +29,13 @@ library
     Control.Concurrent.STM.Promise,
     Control.Concurrent.STM.Promise.Process,
     Control.Concurrent.STM.Promise.Tree,
+    Control.Concurrent.STM.Promise.Workers,
     Control.Concurrent.STM.DTVar
 
   build-depends:
     base,
     stm,
-    process,
-    semigroups
+    process
 
 test-suite trees
   type:           exitcode-stdio-1.0
@@ -48,8 +48,6 @@ test-suite trees
   build-depends:
     base,
     stm-promise,
-    semigroups,
     stm,
-    testing-feat,
     QuickCheck                >= 2.4
 

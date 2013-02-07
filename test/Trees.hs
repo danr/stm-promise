@@ -7,9 +7,9 @@ import Control.Concurrent.STM
 import Control.Concurrent.STM.DTVar
 import Control.Concurrent.STM.Promise
 import Control.Concurrent.STM.Promise.Tree
+import Control.Concurrent.STM.Promise.Workers
 import Control.Monad
 import Data.List
-import Data.Ord
 import Data.Function
 import Data.IORef
 import Data.Monoid
@@ -36,7 +36,7 @@ instance Monoid Int where
 
 eval :: (Ord a,Monoid a) => Tree a -> [a]
 eval = go where
-    go t = case t of
+    go t0 = case t0 of
         Leaf x            -> return x
         Node Both t1 t2   -> nubSorted $ mappend <$> go t1 <*> go t2
         Node Either t1 t2 -> nubSorted $ go t1 ++ go t2
@@ -73,37 +73,6 @@ delayPromise b t = do
         result = readTVar res_var
 
     return Promise{..}
-
-maybeIO :: Maybe a -> (a -> IO b) -> IO (Maybe b)
-maybeIO m f = maybe (return Nothing) (fmap Just . f) m
-
-worker :: Maybe Int -> TChan (Promise a) -> IO ()
-worker m_t ch = fix $ \ loop -> do
-    m_promise <- atomically $ tryReadTChan ch
-    case m_promise of
-        Nothing -> return ()
-        Just promise -> do
-            m_thr <- maybeIO m_t $ \ timeout -> forkIO $ do
-                threadDelay timeout
-                cancel promise
-
-            spawn promise
-
-            atomically $ do
-                status <- result promise
-                when (isUnfinished status) retry
-
-            void $ maybeIO m_thr killThread
-
-            loop
-
--- Evaluate these promises on n processors, using maybe a timeout in
--- microseconds. This function should be put in a library somewhere.
-workers :: Maybe Int -> Int -> [Promise a] -> IO ()
-workers m_t n xs = do
-    ch <- newTChanIO
-    atomically $ mapM_ (writeTChan ch) xs
-    replicateM_ n $ forkIO $ worker m_t ch
 
 mkPromiseTree :: Arbitrary a => Int -> Tree a -> Gen (IO (Tree (Promise a)))
 mkPromiseTree timeout = go where
@@ -143,7 +112,7 @@ runTest a size = do
         (prop_equal a (modifyIORef tests succ) (modifyIORef cancelled succ) 10 10000)
     ts <- readIORef tests
     cs <- readIORef cancelled
-    return $ ((ts,cs),isSuccess res)
+    return ((ts,cs),isSuccess res)
 
 
 main :: IO ()
