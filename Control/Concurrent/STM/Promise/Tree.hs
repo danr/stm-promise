@@ -6,6 +6,7 @@ module Control.Concurrent.STM.Promise.Tree
     ,requireAll,requireAny,tryAll
     ,showTree
     ,interleave
+    ,evalTree
     ,watchTree) where
 
 import Control.Monad hiding (mapM_)
@@ -79,6 +80,17 @@ interleave (Recoverable t)     = interleave t
 (/\/) :: [a] -> [a] -> [a]
 (x:xs) /\/ ys = x:(ys /\/ xs)
 []     /\/ ys = ys
+
+-- | Evaluates a tree of promises, cutting of unnecessary branches, given that
+--   some other thread(s) evaluates the promises.
+evalTree :: Monoid a => Tree (Promise a) -> IO (Maybe a)
+evalTree = (go =<<) . watchTree where
+    go d = do
+        t <- listenDTVarIO d
+        case t of
+            Leaf Cancelled -> return Nothing
+            Leaf (An a)    -> return (Just a)
+            _              -> go d
 
 -- one could have this kind of function instead:
 -- watchTree :: Tree a -> (a -> Promise b) -> IO (DTVar (Tree (a,PromiseResult b)))

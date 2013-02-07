@@ -1,5 +1,5 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
-{-# LANGUAGE RecordWildCards, GeneralizedNewtypeDeriving, ViewPatterns #-}
+{-# LANGUAGE RecordWildCards, GeneralizedNewtypeDeriving, ViewPatterns, Rank2Types #-}
 
 import Control.Applicative
 import Control.Concurrent
@@ -83,33 +83,49 @@ mkPromiseTree timeout = go where
         Node lbl t1 t2 -> liftM2 (Node lbl) <$> go t1 <*> go t2
         Recoverable t' -> liftM Recoverable <$> go t'
 
+type Tester a = IO () -> IO () -> Tree (Promise a) -> [a] -> IO Bool
+type Tester' a = Tree (Promise a) -> [a] -> IO Bool
+
 prop_equal :: (Show a,Ord a,Arbitrary a,Monoid a) =>
-              a -> IO () -> IO () -> Int -> Int -> Tree a -> Property
-prop_equal _ add_test add_cancelled cores timeout tree = do
+              a -> Tester' a -> Int -> Int -> Tree a -> Property
+prop_equal _ tester cores timeout tree = do
     io_promise_tree <- mkPromiseTree timeout tree
     monadicIO $ assert <=< run $ do
+        let evaluations = eval tree
         putStrLn "== New test =="
         putStrLn (showTree tree)
         putStrLn $ "queue order: " ++ show (interleave tree)
-        putStrLn $ "evaluations: " ++ show (eval tree)
+        putStrLn $ "evaluations: " ++ show evaluations
         promise_tree <- io_promise_tree
         workers (Just timeout) cores (interleave promise_tree)
-        tree_dtvar <- watchTree promise_tree
-        fix $ \ loop -> do
-            t <- listenDTVarIO tree_dtvar
-            putStrLn (showTree t)
-            case t of
-                Leaf Unfinished -> loop
-                Leaf (An b) -> add_test >> return (b `elem` eval tree)
-                Leaf Cancelled -> add_test >> add_cancelled >> return True
-                _ -> loop
+        tester promise_tree evaluations
 
-runTest :: (Show a,Ord a,Arbitrary a,Monoid a) => a -> Int -> IO ((Int,Int),Bool)
-runTest a size = do
+testEvalTree :: (Eq a,Monoid a) => Tester a
+testEvalTree add_test add_cancelled promise_tree evaluations = do
+    m_v <- evalTree promise_tree
+    case m_v of
+        Just b -> add_test >> return (b `elem` evaluations)
+        Nothing -> add_test >> add_cancelled >> return True
+
+testWatchTree :: (Show a,Eq a,Monoid a) => Tester a
+testWatchTree add_test add_cancelled promise_tree evaluations = do
+    tree_dtvar <- watchTree promise_tree
+    fix $ \ loop -> do
+        t <- listenDTVarIO tree_dtvar
+        putStrLn (showTree t)
+        case t of
+            Leaf Unfinished -> loop
+            Leaf (An b) -> add_test >> return (b `elem` evaluations)
+            Leaf Cancelled -> add_test >> add_cancelled >> return True
+            _ -> loop
+
+runTest :: (Show a,Ord a,Arbitrary a,Monoid a) => a -> Int -> Tester a -> IO ((Int,Int),Bool)
+runTest a size tester = do
     cancelled <- newIORef (0 :: Int)
     tests <- newIORef (0 :: Int)
+    let tester' = tester (modifyIORef tests succ) (modifyIORef cancelled succ)
     res <- quickCheckWithResult stdArgs { maxSuccess = 1000, maxSize = size }
-        (prop_equal a (modifyIORef tests succ) (modifyIORef cancelled succ) 10 10000)
+        (prop_equal a tester' 10 10000)
     ts <- readIORef tests
     cs <- readIORef cancelled
     return ((ts,cs),isSuccess res)
@@ -118,8 +134,10 @@ runTest a size = do
 main :: IO ()
 main = do
     (times,tests) <- unzip <$> sequence
-        [ runTest (undefined :: Desc Int) 25
-        , runTest (undefined :: Int) 50
+        [ runTest (undefined :: Desc Int) 25 testEvalTree
+        , runTest (undefined :: Int)      50 testEvalTree
+        , runTest (undefined :: Desc Int) 25 testWatchTree
+        , runTest (undefined :: Int)      50 testWatchTree
         ]
     forM_ times $ \(ts,cs) -> putStrLn $ show ts ++ " tests, " ++ show cs ++ " cancelled."
     unless (and tests) exitFailure
