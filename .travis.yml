@@ -2,8 +2,8 @@ language: haskell
 
 install:
     - sudo apt-get -q -y install hlint
-    - cabal configure -fWerror --enable-tests
     - cabal install --only-dependencies
+    - cabal configure -fWerror --enable-tests
     - cabal build
 
 script:
