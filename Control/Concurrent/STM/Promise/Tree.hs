@@ -39,6 +39,13 @@ data Tree a
     -- ^ There is a mean of recovering this computation, by returning mempty
   deriving (Eq, Ord, Show, Typeable, Traversable, Foldable, Functor)
 
+-- The free monad over the underlying structure
+instance Monad Tree where
+    return              = Leaf
+    Leaf x >>= f        = f x
+    Node l u v >>= f    = Node l (u >>= f) (v >>= f)
+    Recoverable t >>= f = Recoverable (t >>= f)
+
 -- | All of these must succeed
 requireAll :: [Tree a] -> Tree a
 requireAll = foldr1 (Node Both)
