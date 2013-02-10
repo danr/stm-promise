@@ -110,49 +110,124 @@ evalTree = (go =<<) . watchTree where
 -- This would add some more flexibility. To recover the function underneath, you would
 -- just supply projections to monoid and instantiate (a -> Promise b) with id
 
+
+-- Abstracting over the common parts of TMVars and DTVars
+class Var var where
+    newVar :: a -> STM (var a)
+
+    newVarIO :: a -> IO (var a)
+    newVarIO = atomically . newVarWriter
+
+    incrementalWrite :: var a -> a -> STM ()
+
+    incrementalWriteIO :: var a -> a -> IO ()
+    incrementalWriteIO = atomically . incrementalWrite
+
+    finalWrite :: var a -> a -> STM ()
+
+    finalWriteIO :: var a -> a -> IO ()
+    finalWriteIO = atomically . finalWrite
+
+    listen :: var a -> STM a
+
+    listenIO :: var a -> IO a
+    listenIO = atomically .listen
+
+    listenMany :: [var a] -> STM [Maybe a]
+
+    listenManyIO :: [var a] -> IO [Maybe a]
+    listenManyIO = atomically . listenMany
+
+    sneakyRead :: var a -> STM (Maybe a)
+
+    sneakyReadIO :: var a -> IO (Maybe a)
+    sneakyReadIO = atomically . sneakyRead
+
+instance Var DTVar where
+    newVar = newVarDTVar
+
+    incrementalWrite = writeDTVar
+
+    finalWrite = writeDTVar
+
+    listen = listenDTVar
+
+    listenMany = mapM Just . listenDTVars
+
+    sneakyRead = readDTVar
+
+instance Var TMVar where
+    newVar = newVarTMVar
+
+    incrementalWrite = return ()
+
+    finalWrite = writeTMVar
+
+    listen = readTMVar
+
+    listenMany = mapM tryReadTMVar
+
+    sneakyRead = tryReadTMVar
+
 -- | Assuming some other thread(s) evaluate the promises in the tree, this gives
 --   a live view of the progress, and cancels unnecessary subtrees (due to `Either`).
-watchTree :: Monoid a => Tree (Promise a) -> IO (DTVar (Tree (PromiseResult a)))
+watchTree :: forall var a . (Var var,Monoid a) =>
+             Tree (Promise a) -> IO (var (Tree (PromiseResult a)))
 watchTree = go
   where
     go t0 = case t0 of
 
         Leaf a ->
 
-            forkWrapTVar (Leaf Unfinished) $ \ write -> atomically $ do
+            forkWrapTVar (Leaf Unfinished) $ \ v -> atomically $ do
                 r <- result a
                 when (isUnfinished r) retry
-                write (Leaf r)
+                finalWrite v (Leaf r)
 
         Recoverable t -> do
 
             d <- go t
 
-            init_tree <- readDTVarIO d
+            init_tree <- fromMaybe Unfinished <$> sneakyReadIO d
 
-            forkWrapTVar (Recoverable init_tree) $ \ write -> fix $ \ loop -> do
-                r <- listenDTVarIO d
+            forkWrapTVar (Recoverable init_tree) $ \ v -> fix $ \ loop -> do
+                r <- listenIO d
                 case r of
-                    Leaf Cancelled -> atomically $ write (Leaf (An mempty))
-                    Leaf An{}      -> atomically $ write r
+                    Leaf Cancelled -> atomically $ finalWrite v (Leaf (An mempty))
+                    Leaf An{}      -> atomically $ finalWrite v r
                     _ -> do
-                        atomically $ write (Recoverable r)
+                        atomically $ incrementalWrite v (Recoverable r)
                         loop
 
         Node lbl t1 t2 -> do
 
+            {-
             let combine = case lbl of
                     Both   -> \ x y -> fmap (uncurry mappend) (bothResults x y)
                     Either -> eitherResult
+                    -}
+
+            let combine r1 r2 = case lbl
+                    Either -> eitherResult (fromMaybe Unfinished r1)
+                                           (fromMaybe Unfinished r2)
+                        -- Baaap! This won't work: TMVars will poll here
+                        -- would need to use proper retrys for TMVars
+                        -- maybe we need some flag if incremental
+                        -- writes are supported......
 
             d1 <- go t1
             d2 <- go t2
 
-            init_tree <- liftM2 (Node lbl) (readDTVarIO d1) (readDTVarIO d2)
+            n1 <- fromMaybe Unfinished <$> sneakReadIO d1
+            n2 <- fromMaybe Unfinished <$> sneakReadIO d2
 
-            forkWrapTVar init_tree $ \ write -> fix $ \ loop -> do
+            let init_tree = Node lbl n1 n2
 
-                [r1,r2] <- listenDTVarsIO [d1,d2]
+            forkWrapTVar init_tree $ \ v -> fix $ \ loop -> do
+
+                [r1,r2] <- listenManyIO [d1,d2]
+
+                case (lbl,r1,r2) of
 
                 let r = case (r1,r2) of
                             (Leaf a,Leaf b) -> combine a b
@@ -160,16 +235,17 @@ watchTree = go
 
                 if isUnfinished r
                     then do
-                        atomically $ write (Node lbl r1 r2)
+                        atomically $ incrementalWrite v  (Node lbl r1 r2)
                         loop
                     else do
-                        atomically $ write (Leaf r)
+                        atomically $ finalWrite v (Leaf r)
                         cancelTree t0
 
-    forkWrapTVar :: Tree (PromiseResult a) -> ((Tree (PromiseResult a) -> STM ()) -> IO ()) ->
-                    IO (DTVar (Tree (PromiseResult a)))
+    forkWrapTVar :: forall a .  Tree (PromiseResult a) ->
+                    (IO (var (Tree (PromiseResult a))) -> IO ()) ->
+                    IO (var (Tree (PromiseResult a)))
     forkWrapTVar init_tree mk = do
-        v <- newDTVarIO init_tree
-        void $ forkIO $ mk (writeDTVar v)
+        v <- newVar init_tree
+        void $ forkIO $ mk v
         return v
 
