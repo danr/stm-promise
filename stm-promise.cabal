@@ -5,8 +5,8 @@ license:             LGPL-3
 license-file:        LICENSE
 author:              Dan Rosén
 maintainer:          Dan Rosén <danr@chalmers.se>
-homepage:            www.github.com/danr/stm-promise
-bug-reports:         www.github.com/danr/stm-promise/issues
+homepage:            http://www.github.com/danr/stm-promise
+bug-reports:         http://www.github.com/danr/stm-promise/issues
 build-type:          Simple
 cabal-version:       >=1.8
 tested-with:         GHC == 7.4.1, GHC == 7.6.1
