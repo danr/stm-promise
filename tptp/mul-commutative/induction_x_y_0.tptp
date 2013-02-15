@@ -1,0 +1,9 @@
+cnf(x,axiom,fr2s(cr1e,cr1e)!=fr2s(cr1e,cr1e)).
+cnf(x,axiom,fr2r(Qw0,Qw1)=fr2r(Qw1,Qw0)).
+cnf(x,axiom,s0r1g(cr1g(Qz3))=Qz3).
+cnf(x,axiom,cr1e!=cr1g(Qz3)).
+cnf(x,axiom,fr2r(cr1e,Qa3Vs)=Qa3Vs).
+cnf(x,axiom,fr2r(cr1g(Qa3Vr),Qa3Vs)=cr1g(fr2r(Qa3Vr,Qa3Vs))).
+cnf(x,axiom,fr2s(cr1e,Qa3Vv)=cr1e).
+cnf(x,axiom,fr2s(cr1g(Qa3Vu),Qa3Vv)=fr2r(Qa3Vv,fr2s(Qa3Vu,Qa3Vv))).
+cnf(x,axiom,Qz2=cr1e|Qz2=cr1g(s0r1g(Qz2))).
