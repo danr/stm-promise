@@ -1,16 +1,17 @@
-name:                stm-promise
-category:            Concurrency
-version:             0.1
-license:             LGPL-3
-license-file:        LICENSE
-author:              Dan Rosén
-maintainer:          Dan Rosén <danr@chalmers.se>
-homepage:            http://www.github.com/danr/stm-promise
-bug-reports:         http://www.github.com/danr/stm-promise/issues
-build-type:          Simple
-cabal-version:       >=1.8
-tested-with:         GHC == 7.4.1, GHC == 7.6.1
-synopsis:            Simple STM Promises for IO computations and external processes
+name:               stm-promise
+category:           Concurrency
+version:            0.0.1
+license:            LGPL-3
+license-file:       LICENSE
+author:             Dan Rosén
+maintainer:         Dan Rosén <danr@chalmers.se>
+homepage:           http://www.github.com/danr/stm-promise
+bug-reports:        http://www.github.com/danr/stm-promise/issues
+build-type:         Simple
+cabal-version:      >=1.8
+tested-with:        GHC == 7.4.1, GHC == 7.6.1
+synopsis:           Simple STM Promises for IO computations and external processes
+description:        Simple STM Promises for IO computations and external processes. Experimental release.
 
 source-repository head
   type: git
@@ -33,10 +34,10 @@ library
     Control.Concurrent.STM.DTVar
 
   build-depends:
-    base,
-    stm                       >= 2.3,
-    mtl,
-    process
+    base                      >= 4 && < 5,
+    stm                       >= 2.3 && < 3,
+    mtl                       >= 2.1.2 && < 3,
+    process                   >= 1.0.1.1 && < 2
 
 test-suite trees
   type:           exitcode-stdio-1.0
@@ -48,7 +49,7 @@ test-suite trees
 
   build-depends:
     base,
-    stm-promise,
+    stm-promise               == 0.0.1,
     stm                       >= 2.3,
     QuickCheck                >= 2.4
 

@@ -102,14 +102,14 @@ prop_equal _ tester cores timeout tree = do
 
 testEvalTree :: (Eq a,Monoid a) => Tester a
 testEvalTree add_test add_cancelled promise_tree evaluations = do
-    m_v <- evalTree promise_tree
+    m_v <- evalTree (const False) promise_tree
     case m_v of
         Just b -> add_test >> return (b `elem` evaluations)
         Nothing -> add_test >> add_cancelled >> return True
 
 testWatchTree :: (Show a,Eq a,Monoid a) => Tester a
 testWatchTree add_test add_cancelled promise_tree evaluations = do
-    tree_dtvar <- watchTree promise_tree
+    tree_dtvar <- watchTree (const False) promise_tree
     fix $ \ loop -> do
         t <- listenDTVarIO tree_dtvar
         putStrLn (showTree t)

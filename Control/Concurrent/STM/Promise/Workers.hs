@@ -9,7 +9,8 @@ import Control.Monad
 maybeIO :: Maybe a -> (a -> IO b) -> IO (Maybe b)
 maybeIO m f = maybe (return Nothing) (fmap Just . f) m
 
--- | Evaluates a single promise, maybe using a timeout in microseconds.
+-- | Evaluates a single promise (in the calling thread),
+--   maybe using a timeout in microseconds.
 evaluatePromise :: Maybe Int -> Promise a -> IO ()
 evaluatePromise m_t promise = do
     m_thr <- maybeIO m_t $ \ timeout -> forkIO $ do

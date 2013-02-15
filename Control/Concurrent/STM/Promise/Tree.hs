@@ -1,13 +1,18 @@
 {-# LANGUAGE DeriveFunctor, DeriveDataTypeable, DeriveTraversable, DeriveFoldable #-}
 -- | A tree of computation
 module Control.Concurrent.STM.Promise.Tree
-    (Label(..)
-    ,Tree(..)
-    ,requireAll,requireAny,tryAll
-    ,showTree
-    ,interleave
-    ,evalTree
-    ,watchTree) where
+    (
+    -- * Trees
+       Tree(..), Label(..),
+    -- * Creating trees
+       requireAll,requireAny,tryAll,
+    -- * Evaluating trees
+       evalTree,watchTree,
+    -- * Scheduling
+       interleave,
+    -- * Utilities
+       showTree
+    ) where
 
 import Control.Monad hiding (mapM_)
 import Prelude hiding (mapM_, foldr1)
@@ -46,6 +51,7 @@ instance Monad Tree where
     Node l u v >>= f    = Node l (u >>= f) (v >>= f)
     Recoverable t >>= f = Recoverable (t >>= f)
 
+-- | Passes a list along if it is nonempty, otherwise raises an error message
 ensureNonempty :: String -> [a] -> [a]
 ensureNonempty s [] = error $ s ++ ": non-empty list!"
 ensureNonempty _ xs = xs
@@ -80,7 +86,7 @@ showTree = go (2 :: Int)
 cancelTree :: Tree (Promise a) -> IO ()
 cancelTree = mapM_ cancel
 
--- | A simple scheduling
+-- | A simple scheduling (see `Control.Concurrent.STM.Promise.Workers.workers`)
 interleave :: Tree a -> [a]
 interleave (Leaf a)            = return a
 interleave (Node Either t1 t2) = interleave t1 /\/ interleave t2
@@ -94,8 +100,12 @@ interleave (Recoverable t)     = interleave t
 
 -- | Evaluates a tree of promises, cutting of unnecessary branches, given that
 --   some other thread(s) evaluates the promises.
-evalTree :: Monoid a => Tree (Promise a) -> IO (Maybe a)
-evalTree = (go =<<) . watchTree where
+--
+--   The first argument is the same as for `watchTree`. Is currently
+--   implemented in terms of `watchTree`, rather than something more efficient
+--   (such as `TMVars`).
+evalTree :: Monoid a => (a -> Bool) -> Tree (Promise a) -> IO (Maybe a)
+evalTree failure = (go =<<) . watchTree failure where
     go d = do
         t <- listenDTVarIO d
         case t of
@@ -103,17 +113,13 @@ evalTree = (go =<<) . watchTree where
             Leaf (An a)    -> return (Just a)
             _              -> go d
 
--- one could have this kind of function instead:
--- watchTree :: Tree a -> (a -> Promise b) -> IO (DTVar (Tree (a,PromiseResult b)))
---           + function for joining (a,b) -> (a,b) -> (a,b)
---           + function for recovering a -> (a,b)
--- This would add some more flexibility. To recover the function underneath, you would
--- just supply projections to monoid and instantiate (a -> Promise b) with id
-
 -- | Assuming some other thread(s) evaluate the promises in the tree, this gives
 --   a live view of the progress, and cancels unnecessary subtrees (due to `Either`).
-watchTree :: Monoid a => Tree (Promise a) -> IO (DTVar (Tree (PromiseResult a)))
-watchTree = go
+--
+--   The first argument is a way to deem promises with results as failures. `(== mempty)` or
+--   (const False) could be good alternatives.
+watchTree :: Monoid a => (a -> Bool) -> Tree (Promise a) -> IO (DTVar (Tree (PromiseResult a)))
+watchTree failure = go
   where
     go t0 = case t0 of
 
@@ -143,7 +149,7 @@ watchTree = go
 
             let combine = case lbl of
                     Both   -> \ x y -> fmap (uncurry mappend) (bothResults x y)
-                    Either -> eitherResult
+                    Either -> eitherResult' failure
 
             d1 <- go t1
             d2 <- go t2
@@ -172,4 +178,12 @@ watchTree = go
         v <- newDTVarIO init_tree
         void $ forkIO $ mk (writeDTVar v)
         return v
+
+{- one could have this kind of function instead:
+   watchTree :: Tree a -> (a -> Promise b) -> IO (DTVar (Tree (a,PromiseResult b)))
+             + function for joining (a,b) -> (a,b) -> (a,b)
+             + function for recovering a -> (a,b)
+   This would add some more flexibility. To recover the function underneath, you would
+   just supply projections to monoid and instantiate (a -> Promise b) with id
+-}
 
