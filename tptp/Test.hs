@@ -10,6 +10,8 @@ import Control.Concurrent.STM.Promise.Process
 import Control.Concurrent.STM.Promise.Tree
 import Control.Concurrent.STM.Promise.Workers
 
+import System.Environment
+
 {- | A tree for this file structure:
    ├── mul-commutative
    │   ├── induction_x_0.tptp
@@ -56,19 +58,26 @@ success r = excode r == ExitSuccess && any (`isInfixOf` stdout r) ok
 eproverPromise :: FilePath -> IO (Promise [(FilePath,Bool)])
 eproverPromise file = do
     let args = ["-xAuto","-tAuto",'-':"-tptp3-format","-s"]
-    promise <- processPromise "eprover" (file : args) ""
+        cmd  = "eprover"
+    {-
+    let args = ["-tptp","-nw"]
+        cmd  = "z3"
+        -}
+    promise <- processPromise cmd (file : args) ""
     let chres :: ProcessResult -> [(FilePath,Bool)]
         chres r = [ (file,success r) ]
     return $ fmap chres promise
 
 main :: IO ()
 main = do
+    tm:_ <- map read `fmap` getArgs
+
     promise_tree <- mapM eproverPromise file_tree
 
-    let timeout      = 1000 * 1000 -- microseconds
+    let timeout      = tm * 1000 -- microseconds
         processes    = 2
 
-    workers (Just timeout) processes (interleave promise_tree)
+    cancel <- workers (Just timeout) processes (interleave promise_tree)
 
     m_res <- evalTree (any (not . snd)) promise_tree
 
@@ -77,5 +86,7 @@ main = do
     putStrLn $ "Results: "
 
     mapM_ print res
+
+    cancel
 
 

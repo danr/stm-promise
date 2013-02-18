@@ -9,7 +9,6 @@ import Control.Monad.STM
 import Control.Concurrent.STM.TVar
 import Control.Concurrent.STM.Promise
 
-import Control.Concurrent
 import Control.Exception
 
 import System.Process
@@ -52,28 +51,30 @@ processPromise cmd args input = do
                          , std_err = CreatePipe
                          }
 
+                atomically $ writeTVar pid_var (Just pid)
+
                 unless (null input) $ do
                     hPutStr inh input
                     hFlush inh
 
                 hClose inh
 
-                atomically $ writeTVar pid_var (Just pid)
-
-                void $ forkIO $ silent $ do
+                let go = do
                     ex_code <- waitForProcess pid
                     out <- hGetContents outh
                     err <- hGetContents errh
-                    atomically $ writeTVar result_var $ An ProcessResult
-                        { stderr = err
-                        , stdout = out
-                        , excode = ex_code
-                        }
                     a <- evaluate (length out)
                     b <- evaluate (length err)
                     a `seq` b `seq` do
                         hClose outh
                         hClose errh
+                        atomically $ writeTVar result_var $ An ProcessResult
+                            { stderr = err
+                            , stdout = out
+                            , excode = ex_code
+                            }
+
+                go `catchError` \ _ -> atomically (writeTVar result_var Cancelled)
 
         cancel = do
 
@@ -86,9 +87,10 @@ processPromise cmd args input = do
                 swapTVar pid_var Nothing
 
             case m_pid of
-                Just pid -> do
+                Just pid -> silent $ do
                     terminateProcess pid
-                    silent $ void $ waitForProcess pid
+                    ex_code <- waitForProcess pid
+                    ex_code `seq` return ()
                 Nothing  -> return ()
 
         result = readTVar result_var
