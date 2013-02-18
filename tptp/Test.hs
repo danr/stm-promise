@@ -35,14 +35,14 @@ import System.Environment
        └── no_induction_0.tptp
 -}
 file_tree :: Tree FilePath
-file_tree = fmap (++ ".tptp") $ tryAll $
-   [ fmap ("mul-commutative/" ++) $ requireAny $
+file_tree = fmap (++ ".tptp") $ tryAll
+   [ fmap ("mul-commutative/" ++) $ requireAny
      [ fmap ("induction_x_" ++) $ requireAll $ map Leaf ["0","1"]
      , fmap ("induction_y_" ++) $ requireAll $ map Leaf ["0","1"]
      , fmap ("induction_x_y_" ++) $ requireAll $ map Leaf ["0","1","2","3"]
      , Leaf "no_induction_0"
      ]
-   , fmap ("plus-commutative/" ++) $ requireAny $
+   , fmap ("plus-commutative/" ++) $ requireAny
      [ fmap ("induction_x_" ++) $ requireAll $ map Leaf ["0","1"]
      , fmap ("induction_y_" ++) $ requireAll $ map Leaf ["0","1"]
      , fmap ("induction_x_y_" ++) $ requireAll $ map Leaf ["0","1","2","3"]
@@ -83,7 +83,7 @@ main = do
 
     let res = fromMaybe [] m_res
 
-    putStrLn $ "Results: "
+    putStrLn "Results: "
 
     mapM_ print res
 
