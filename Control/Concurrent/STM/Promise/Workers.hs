@@ -13,8 +13,9 @@ maybeIO m f = maybe (return Nothing) (fmap Just . f) m
 --   maybe using a timeout in microseconds.
 evaluatePromise :: Maybe Int -> Promise a -> IO ()
 evaluatePromise m_t promise = do
+
     m_thr <- maybeIO m_t $ \ timeout -> forkIO $ do
-        threadDelay (max timeout 1)
+        threadDelay timeout
         cancel promise
 
     spawn promise
@@ -37,13 +38,9 @@ worker m_t ch = go where
 
 
 -- | Evaluate these promises on n processors, maybe using a timeout in microseconds.
---   Returns a cancellation function
-workers :: Maybe Int -> Int -> [Promise a] -> IO (IO ())
+workers :: Maybe Int -> Int -> [Promise a] -> IO ()
 workers m_t n xs = do
     ch <- newTChanIO
     atomically $ mapM_ (writeTChan ch) xs
-    threads <- replicateM n $ forkIO $ worker m_t ch
-    return $ do
-        mapM_ killThread threads
-        mapM_ cancel xs
+    replicateM_ n $ forkIO $ worker m_t ch
 

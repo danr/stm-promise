@@ -97,9 +97,8 @@ prop_equal _ tester cores timeout tree = do
         putStrLn $ "queue order: " ++ show (interleave tree)
         putStrLn $ "evaluations: " ++ show evaluations
         promise_tree <- io_promise_tree
-        cancel <- workers (Just timeout) cores (interleave promise_tree)
+        workers (Just timeout) cores (interleave promise_tree)
         tester promise_tree evaluations
-        cancel
 
 testEvalTree :: (Eq a,Monoid a) => Tester a
 testEvalTree add_test add_cancelled promise_tree evaluations = do

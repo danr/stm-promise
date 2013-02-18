@@ -77,7 +77,7 @@ main = do
     let timeout      = tm * 1000 -- microseconds
         processes    = 2
 
-    cancel <- workers (Just timeout) processes (interleave promise_tree)
+    workers (Just timeout) processes (interleave promise_tree)
 
     m_res <- evalTree (any (not . snd)) promise_tree
 
@@ -86,7 +86,5 @@ main = do
     putStrLn $ "Results: "
 
     mapM_ print res
-
-    cancel
 
 
