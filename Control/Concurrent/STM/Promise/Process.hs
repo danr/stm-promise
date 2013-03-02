@@ -77,7 +77,7 @@ processPromiseCallback callback cmd args input = do
                                 , stdout = out
                                 , excode = ex_code
                                 }
-                        atomically $ writeTVar result_var $ (An res)
+                        atomically $ writeTVar result_var (An res)
                         callback res
 
                 go `catchError` \ _ -> atomically (writeTVar result_var Cancelled)
