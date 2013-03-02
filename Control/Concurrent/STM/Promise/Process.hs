@@ -1,7 +1,8 @@
 {-# LANGUAGE RecordWildCards #-}
 -- | Promises for processes
 module Control.Concurrent.STM.Promise.Process
-    (processPromise, ProcessResult(..), ExitCode(..)) where
+    ( processPromise, processPromiseCallback
+    , ProcessResult(..), ExitCode(..)) where
 
 import Control.Monad
 import Control.Monad.Error
@@ -23,13 +24,16 @@ data ProcessResult = ProcessResult
     }
   deriving (Eq, Ord, Show)
 
--- | Make a `Promise`
-processPromise
-    :: FilePath                   -- ^ Program to run
+-- | Make a `Promise`, but add a callback that will
+--   be run when the process finishes nicely.
+--   This hook is mainly intended for logging.
+processPromiseCallback
+    :: (ProcessResult -> IO ())   -- ^ Callback
+    -> FilePath                   -- ^ Program to run
     -> [String]                   -- ^ Arguments
     -> String                     -- ^ Input string (stdin)
     -> IO (Promise ProcessResult) -- ^ Promise object
-processPromise cmd args input = do
+processPromiseCallback callback cmd args input = do
 
     pid_var    <- newTVarIO Nothing
     result_var <- newTVarIO Unfinished
@@ -68,11 +72,13 @@ processPromise cmd args input = do
                     a `seq` b `seq` do
                         hClose outh
                         hClose errh
-                        atomically $ writeTVar result_var $ An ProcessResult
-                            { stderr = err
-                            , stdout = out
-                            , excode = ex_code
-                            }
+                        let res = ProcessResult
+                                { stderr = err
+                                , stdout = out
+                                , excode = ex_code
+                                }
+                        atomically $ writeTVar result_var $ (An res)
+                        callback res
 
                 go `catchError` \ _ -> atomically (writeTVar result_var Cancelled)
 
@@ -98,3 +104,10 @@ processPromise cmd args input = do
     return Promise {..}
 
 
+-- | Make a `Promise`
+processPromise
+    :: FilePath                   -- ^ Program to run
+    -> [String]                   -- ^ Arguments
+    -> String                     -- ^ Input string (stdin)
+    -> IO (Promise ProcessResult) -- ^ Promise object
+processPromise = processPromiseCallback (\ _ -> return ())

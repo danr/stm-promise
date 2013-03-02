@@ -1,6 +1,6 @@
 name:               stm-promise
 category:           Concurrency
-version:            0.0.1
+version:            0.0.1.1
 license:            LGPL-3
 license-file:       LICENSE
 author:             Dan Rosén
@@ -138,7 +138,7 @@ test-suite trees
 
   build-depends:
     base,
-    stm-promise               == 0.0.1,
+    stm-promise               == 0.0.1.1,
     stm                       >= 2.3,
     QuickCheck                >= 2.4
 
