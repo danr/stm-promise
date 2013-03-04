@@ -154,9 +154,9 @@ evalTree failure t00 = do
                         Unfinished -> retry
                         res        -> return res
 
-                write res
-
                 cancelTree t0
+
+                write res
 
         -- | Invariant: never write Unfinished
         forkWrapTMVar :: ((PromiseResult a -> IO ()) -> IO ()) -> IO (TMVar (PromiseResult a))
