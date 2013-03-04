@@ -1,4 +1,4 @@
-{-# LANGUAGE DeriveFunctor, DeriveDataTypeable, DeriveTraversable, DeriveFoldable #-}
+{-# LANGUAGE DeriveFunctor, DeriveDataTypeable, DeriveTraversable, DeriveFoldable, ScopedTypeVariables #-}
 -- | A tree of computation
 module Control.Concurrent.STM.Promise.Tree
     (
@@ -25,6 +25,7 @@ import Data.Typeable
 import Data.Traversable
 import Data.Foldable
 import Data.Function
+import Data.Maybe
 
 -- | Both/Either labels
 data Label
@@ -101,30 +102,73 @@ interleave (Recoverable t)     = interleave t
 -- | Evaluates a tree of promises, cutting of unnecessary branches, given that
 --   some other thread(s) evaluates the promises.
 --
---   The first argument is the same as for `watchTree`. Is currently
---   implemented in terms of `watchTree`, rather than something more efficient
---   (such as `TMVars`).
---
---   The first result is the failures, then the actual result
-evalTree :: Monoid a => (a -> Bool) -> Tree (Promise a) -> IO (a,a)
-evalTree failure t0 = do
-    (err_chan,dtvar) <- watchTree failure t0
-    res_val <- go dtvar
-    res_err <- go' err_chan
-    return (res_err,res_val)
-  where
-    go d = do
-        t <- listenDTVarIO d
-        case t of
-            Leaf Cancelled -> return mempty
-            Leaf (An a)    -> return a
-            _              -> go d
+--   The first result is the failures, then the actual result comes
 
-    go' ch = do
-        e <- atomically (tryReadTChan ch)
-        case e of
-            Nothing -> return mempty
-            Just x  -> mappend x `liftM` go' ch
+evalTree :: forall a . Monoid a => (a -> Bool) -> Tree (Promise a) -> IO (a,a)
+evalTree failure t00 = do
+    err_var <- newTVarIO mempty
+    m <- go_intermediate err_var t00
+    res <- atomically $ takeTMVar m
+    errs <- readTVarIO err_var
+    return (errs,read_result res)
+  where
+    read_result :: PromiseResult a -> a
+    read_result (An a) = a
+    read_result _      = mempty
+
+    go_intermediate err_var = go
+      where
+        go :: Tree (Promise a) -> IO (TMVar (PromiseResult a))
+        go t0 = case t0 of
+
+            Leaf u -> forkWrapTMVar $ \ write ->
+                (write =<<) $ atomically $ do
+                    r <- result u
+                    case r of
+                        Unfinished -> retry
+                        An a | failure a -> do
+                            modifyTVar' err_var (mappend a)
+                            return Cancelled
+                        _ -> return r
+
+            Recoverable t -> forkWrapTMVar $ \ write -> do
+                m <- go t
+                res <- atomically (takeTMVar m)
+                case res of
+                    Cancelled -> write (An mempty)
+                    _         -> write res
+
+            Node lbl t1 t2 -> forkWrapTMVar $ \ write -> do
+
+                let combine = case lbl of
+                        Both   -> \ x y -> fmap (uncurry mappend) (bothResults x y)
+                        Either -> eitherResult
+
+                m1 <- go t1
+                m2 <- go t2
+
+                (res,r1,r2) <- atomically $ do
+                    r1 <- fromMaybe Unfinished `liftM` tryTakeTMVar m1
+                    r2 <- fromMaybe Unfinished `liftM` tryTakeTMVar m2
+                    case combine r1 r2 of
+                        Unfinished -> retry
+                        res        -> return (res,r1,r2)
+
+                write res
+
+                let maybeCancel Cancelled = const $ return ()
+                    maybeCancel _         = cancelTree
+
+                maybeCancel r1 t1
+                maybeCancel r2 t2
+
+        -- | Invariant: never write Unfinished
+        forkWrapTMVar :: ((PromiseResult a -> IO ()) -> IO ()) -> IO (TMVar (PromiseResult a))
+        forkWrapTMVar write_ = do
+            v <- newEmptyTMVarIO
+            void $ forkIO $ write_ (atomically . putTMVar v)
+            return v
+
 
 -- | Assuming some other thread(s) evaluate the promises in the tree, this gives
 --   a live view of the progress, and cancels unnecessary subtrees (due to `Either`).

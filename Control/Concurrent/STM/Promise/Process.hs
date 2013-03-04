@@ -7,6 +7,7 @@ module Control.Concurrent.STM.Promise.Process
 import Control.Monad
 import Control.Monad.Error
 import Control.Monad.STM
+import Control.Concurrent
 import Control.Concurrent.STM.TVar
 import Control.Concurrent.STM.Promise
 
@@ -38,6 +39,7 @@ processPromiseCallback callback cmd args input = do
     pid_var    <- newTVarIO Nothing
     result_var <- newTVarIO Unfinished
     spawn_ok   <- newTVarIO True
+    tid_var    <- newTVarIO Nothing
 
     let silent io = io `catchError` const (return ())
 
@@ -64,33 +66,43 @@ processPromiseCallback callback cmd args input = do
                 hClose inh
 
                 let go = do
-                    ex_code <- waitForProcess pid
-                    out <- hGetContents outh
-                    err <- hGetContents errh
-                    a <- evaluate (length out)
-                    b <- evaluate (length err)
-                    a `seq` b `seq` do
-                        hClose outh
-                        hClose errh
-                        let res = ProcessResult
-                                { stderr = err
-                                , stdout = out
-                                , excode = ex_code
-                                }
-                        atomically $ writeTVar result_var (An res)
-                        callback res
+                        ex_code <- waitForProcess pid
+                        out <- hGetContents outh
+                        err <- hGetContents errh
+                        a <- evaluate (length out)
+                        b <- evaluate (length err)
+                        a `seq` b `seq` do
+                            hClose outh
+                            hClose errh
+                            let res = ProcessResult
+                                    { stderr = err
+                                    , stdout = out
+                                    , excode = ex_code
+                                    }
+                            atomically $ writeTVar result_var (An res)
+                            atomically $ writeTVar tid_var Nothing
+                            callback res
 
-                go `catchError` \ _ -> atomically (writeTVar result_var Cancelled)
+                (atomically . writeTVar tid_var . Just =<< forkIO go)
+                    `catchError` \ _ -> atomically (writeTVar result_var Cancelled)
 
         cancel = do
 
-            m_pid <- atomically $ do
+            (m_pid,m_tid) <- atomically $ do
 
-                writeTVar result_var Cancelled
+                res <- readTVar result_var
+                case res of
+                    Unfinished -> writeTVar result_var Cancelled
+                    _          -> return ()
 
                 writeTVar spawn_ok False
 
-                swapTVar pid_var Nothing
+                liftM2 (,) (swapTVar pid_var Nothing)
+                           (swapTVar tid_var Nothing)
+
+            case m_tid of
+                Just tid -> silent $ killThread tid
+                Nothing  -> return ()
 
             case m_pid of
                 Just pid -> silent $ do
