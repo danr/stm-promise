@@ -77,9 +77,7 @@ Running the theorem prover eprover in parallel:
 
         workers (Just timeout) processes (interleave promise_tree)
 
-        m_res <- evalTree (any (not . snd)) promise_tree
-
-        let res = fromMaybe [] m_res
+        res <- evalTree (any (not . snd)) promise_tree
 
         putStrLn "Results: "
 

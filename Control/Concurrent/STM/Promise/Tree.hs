@@ -104,80 +104,101 @@ interleave (Recoverable t)     = interleave t
 --   The first argument is the same as for `watchTree`. Is currently
 --   implemented in terms of `watchTree`, rather than something more efficient
 --   (such as `TMVars`).
-evalTree :: Monoid a => (a -> Bool) -> Tree (Promise a) -> IO (Maybe a)
-evalTree failure = (go =<<) . watchTree failure where
+--
+--   The first result is the failures, then the actual result
+evalTree :: Monoid a => (a -> Bool) -> Tree (Promise a) -> IO (a,a)
+evalTree failure t0 = do
+    (err_chan,dtvar) <- watchTree failure t0
+    res_val <- go dtvar
+    res_err <- go' err_chan
+    return (res_err,res_val)
+  where
     go d = do
         t <- listenDTVarIO d
         case t of
-            Leaf Cancelled -> return Nothing
-            Leaf (An a)    -> return (Just a)
+            Leaf Cancelled -> return mempty
+            Leaf (An a)    -> return a
             _              -> go d
+
+    go' ch = do
+        e <- atomically (tryReadTChan ch)
+        case e of
+            Nothing -> return mempty
+            Just x  -> mappend x `liftM` go' ch
 
 -- | Assuming some other thread(s) evaluate the promises in the tree, this gives
 --   a live view of the progress, and cancels unnecessary subtrees (due to `Either`).
 --
 --   The first argument is a way to deem promises with results as failures. `(== mempty)` or
---   (const False) could be good alternatives.
-watchTree :: Monoid a => (a -> Bool) -> Tree (Promise a) -> IO (DTVar (Tree (PromiseResult a)))
-watchTree failure = go
+--   (const False) could be good alternatives. These failures are sent to the TChan.
+watchTree :: Monoid a => (a -> Bool) -> Tree (Promise a) -> IO (TChan a,DTVar (Tree (PromiseResult a)))
+watchTree failure t_init = do
+    ch <- newTChanIO
+    (,) ch `liftM` go_intermediate ch t_init
   where
-    go t0 = case t0 of
+    go_intermediate failure_chan = go
+      where
+        go t0 = case t0 of
 
-        Leaf a ->
+            Leaf u ->
 
-            forkWrapTVar (Leaf Unfinished) $ \ write -> atomically $ do
-                r <- result a
-                when (isUnfinished r) retry
-                write (Leaf r)
+                forkWrapTVar (Leaf Unfinished) $ \ write -> atomically $ do
+                    r <- result u
+                    when (isUnfinished r) retry
+                    write . Leaf =<< case r of
+                        An a | failure a -> do
+                            writeTChan failure_chan a
+                            return (An mempty)
+                        _ -> return r
 
-        Recoverable t -> do
+            Recoverable t -> do
 
-            d <- go t
+                d <- go t
 
-            init_tree <- readDTVarIO d
+                init_tree <- readDTVarIO d
 
-            forkWrapTVar (Recoverable init_tree) $ \ write -> fix $ \ loop -> do
-                r <- listenDTVarIO d
-                case r of
-                    Leaf Cancelled -> atomically $ write (Leaf (An mempty))
-                    Leaf An{}      -> atomically $ write r
-                    _ -> do
-                        atomically $ write (Recoverable r)
-                        loop
+                forkWrapTVar (Recoverable init_tree) $ \ write -> fix $ \ loop -> do
+                    r <- listenDTVarIO d
+                    case r of
+                        Leaf Cancelled -> atomically $ write (Leaf (An mempty))
+                        Leaf An{}      -> atomically $ write r
+                        _ -> do
+                            atomically $ write (Recoverable r)
+                            loop
 
-        Node lbl t1 t2 -> do
+            Node lbl t1 t2 -> do
 
-            let combine = case lbl of
-                    Both   -> \ x y -> fmap (uncurry mappend) (bothResults x y)
-                    Either -> eitherResult' failure
+                let combine = case lbl of
+                        Both   -> \ x y -> fmap (uncurry mappend) (bothResults x y)
+                        Either -> eitherResult
 
-            d1 <- go t1
-            d2 <- go t2
+                d1 <- go t1
+                d2 <- go t2
 
-            init_tree <- liftM2 (Node lbl) (readDTVarIO d1) (readDTVarIO d2)
+                init_tree <- liftM2 (Node lbl) (readDTVarIO d1) (readDTVarIO d2)
 
-            forkWrapTVar init_tree $ \ write -> fix $ \ loop -> do
+                forkWrapTVar init_tree $ \ write -> fix $ \ loop -> do
 
-                [r1,r2] <- listenDTVarsIO [d1,d2]
+                    [r1,r2] <- listenDTVarsIO [d1,d2]
 
-                let r = case (r1,r2) of
-                            (Leaf a,Leaf b) -> combine a b
-                            _               -> Unfinished
+                    let r = case (r1,r2) of
+                                (Leaf a,Leaf b) -> combine a b
+                                _               -> Unfinished
 
-                if isUnfinished r
-                    then do
-                        atomically $ write (Node lbl r1 r2)
-                        loop
-                    else do
-                        atomically $ write (Leaf r)
-                        cancelTree t0
+                    if isUnfinished r
+                        then do
+                            atomically $ write (Node lbl r1 r2)
+                            loop
+                        else do
+                            atomically $ write (Leaf r)
+                            cancelTree t0
 
-    forkWrapTVar :: Tree (PromiseResult a) -> ((Tree (PromiseResult a) -> STM ()) -> IO ()) ->
-                    IO (DTVar (Tree (PromiseResult a)))
-    forkWrapTVar init_tree mk = do
-        v <- newDTVarIO init_tree
-        void $ forkIO $ mk (writeDTVar v)
-        return v
+        forkWrapTVar :: Tree (PromiseResult a) -> ((Tree (PromiseResult a) -> STM ()) -> IO ()) ->
+                        IO (DTVar (Tree (PromiseResult a)))
+        forkWrapTVar init_tree mk = do
+            v <- newDTVarIO init_tree
+            void $ forkIO $ mk (writeDTVar v)
+            return v
 
 {- one could have this kind of function instead:
    watchTree :: Tree a -> (a -> Promise b) -> IO (DTVar (Tree (a,PromiseResult b)))
@@ -187,3 +208,7 @@ watchTree failure = go
    just supply projections to monoid and instantiate (a -> Promise b) with id
 -}
 
+{-
+    Why don't I just return Tree (PromiseResult a) ?
+    This library seriously needs to be rethought
+-}

@@ -79,12 +79,9 @@ main = do
 
     workers (Just timeout) processes (interleave promise_tree)
 
-    m_res <- evalTree (any (not . snd)) promise_tree
-
-    let res = fromMaybe [] m_res
+    (_,res) <- evalTree (any (not . snd)) promise_tree
 
     putStrLn "Results: "
 
     mapM_ print res
-
 

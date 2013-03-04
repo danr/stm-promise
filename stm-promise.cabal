@@ -1,6 +1,6 @@
 name:               stm-promise
 category:           Concurrency
-version:            0.0.1.1
+version:            0.0.2
 license:            LGPL-3
 license-file:       LICENSE
 author:             Dan Rosén
@@ -83,9 +83,7 @@ description:
     >
     >     workers (Just timeout) processes (interleave promise_tree)
     >
-    >     m_res <- evalTree (any (not . snd)) promise_tree
-    >
-    >     let res = fromMaybe [] m_res
+    >     (_,res) <- evalTree (any (not . snd)) promise_tree
     >
     >     putStrLn "Results: "
     >
