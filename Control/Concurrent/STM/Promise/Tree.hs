@@ -147,20 +147,16 @@ evalTree failure t00 = do
                 m1 <- go t1
                 m2 <- go t2
 
-                (res,r1,r2) <- atomically $ do
+                res <- atomically $ do
                     r1 <- fromMaybe Unfinished `liftM` tryTakeTMVar m1
                     r2 <- fromMaybe Unfinished `liftM` tryTakeTMVar m2
                     case combine r1 r2 of
                         Unfinished -> retry
-                        res        -> return (res,r1,r2)
+                        res        -> return res
 
                 write res
 
-                let maybeCancel Cancelled = const $ return ()
-                    maybeCancel _         = cancelTree
-
-                maybeCancel r1 t1
-                maybeCancel r2 t2
+                cancelTree t0
 
         -- | Invariant: never write Unfinished
         forkWrapTMVar :: ((PromiseResult a -> IO ()) -> IO ()) -> IO (TMVar (PromiseResult a))
