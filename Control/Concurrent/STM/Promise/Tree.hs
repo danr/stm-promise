@@ -148,7 +148,7 @@ watchTree failure t_init = do
                     write . Leaf =<< case r of
                         An a | failure a -> do
                             writeTChan failure_chan a
-                            return (An mempty)
+                            return Cancelled
                         _ -> return r
 
             Recoverable t -> do
