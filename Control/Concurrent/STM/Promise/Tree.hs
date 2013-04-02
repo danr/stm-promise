@@ -9,13 +9,13 @@ module Control.Concurrent.STM.Promise.Tree
     -- * Evaluating trees
        evalTree,watchTree,
     -- * Scheduling
-       interleave,
+       interleave, interleave',
     -- * Utilities
        showTree
     ) where
 
 import Control.Monad hiding (mapM_)
-import Prelude hiding (mapM_, foldr1)
+import Prelude hiding (mapM_, foldr1, concatMap, concat)
 import Control.Concurrent
 import Control.Concurrent.STM
 import Control.Concurrent.STM.DTVar
@@ -26,6 +26,7 @@ import Data.Traversable
 import Data.Foldable
 import Data.Function
 import Data.Maybe
+import Data.List (transpose)
 
 -- | Both/Either labels
 data Label
@@ -98,6 +99,17 @@ interleave (Recoverable t)     = interleave t
 (/\/) :: [a] -> [a] -> [a]
 (x:xs) /\/ ys = x:(ys /\/ xs)
 []     /\/ ys = ys
+
+-- | A somewhat smarter scheduling (see `Control.Concurrent.STM.Promise.Workers.workers`)
+interleave' :: Tree a -> [a]
+interleave' (Leaf a)            = return a
+interleave' t@(Node Either _ _) = concat . transpose . map interleave $ collect Either t
+interleave' t@(Node Both _ _)   = concatMap interleave $ collect Both t
+interleave' (Recoverable t)     = interleave t
+
+collect :: Label -> Tree a -> [Tree a]
+collect lbl (Node lbl' t1 t2) | lbl == lbl' = collect lbl t1 ++ collect lbl t2
+collect _   t                               = return t
 
 -- | Evaluates a tree of promises, cutting of unnecessary branches, given that
 --   some other thread(s) evaluates the promises.
