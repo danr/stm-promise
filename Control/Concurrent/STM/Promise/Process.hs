@@ -16,6 +16,9 @@ import System.Process
 import System.IO
 import System.Exit
 
+import System.Process.Internals
+import System.Posix.Signals
+
 -- | The result from a process
 data ProcessResult = ProcessResult
     { stderr :: String
@@ -94,7 +97,9 @@ processPromiseCallback callback cmd args input = do
 
             case m_pid of
                 Just pid -> silent $ do
-                    terminateProcess pid
+                    withProcessHandle_ pid $ \ mph -> case mph of
+                        OpenHandle ph -> signalProcess killProcess ph >> return mph
+                        ClosedHandle{} -> return mph
                     ex_code <- waitForProcess pid
                     ex_code `seq` return ()
                 Nothing  -> return ()

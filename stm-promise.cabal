@@ -1,6 +1,6 @@
 name:               stm-promise
 category:           Concurrency
-version:            0.0.2
+version:            0.0.2.1
 license:            LGPL-3
 license-file:       LICENSE
 author:             Dan Rosén
@@ -124,7 +124,8 @@ library
     base                      >= 4 && < 5,
     stm                       >= 2.3 && < 3,
     mtl                       >= 2.1.2 && < 3,
-    process                   >= 1.0.1.1 && < 2
+    process                   >= 1.0.1.1 && < 2,
+    unix                      >= 2.5
 
 test-suite trees
   type:           exitcode-stdio-1.0
