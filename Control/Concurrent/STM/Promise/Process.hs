@@ -1,4 +1,4 @@
-{-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE RecordWildCards, CPP #-}
 -- | Promises for processes
 module Control.Concurrent.STM.Promise.Process
     ( processPromise, processPromiseCallback
@@ -7,6 +7,7 @@ module Control.Concurrent.STM.Promise.Process
 import Control.Monad
 import Control.Monad.Error
 import Control.Monad.STM
+import Control.Concurrent
 import Control.Concurrent.STM.TVar
 import Control.Concurrent.STM.Promise
 
@@ -42,7 +43,7 @@ processPromiseCallback callback cmd args input = do
     result_var <- newTVarIO Unfinished
     spawn_ok   <- newTVarIO True
 
-    let silent io = io `catchError` const (return ())
+    let silent io = io `catchError` const (return ()) -- (\ e -> print e)
 
         spawn = do
 
@@ -89,17 +90,17 @@ processPromiseCallback callback cmd args input = do
 
             m_pid <- atomically $ do
 
-                writeTVar result_var Cancelled
+                v <- readTVar result_var
+                when (v == Unfinished) (writeTVar result_var Cancelled)
 
                 writeTVar spawn_ok False
 
                 swapTVar pid_var Nothing
 
             case m_pid of
-                Just pid -> silent $ do
-                    withProcessHandle_ pid $ \ mph -> case mph of
-                        OpenHandle ph -> signalProcess killProcess ph >> return mph
-                        ClosedHandle{} -> return mph
+                Just pid -> void $ forkIO $ silent $ do
+                    -- terminateProcess pid
+                    terminateProcess9 pid
                     ex_code <- waitForProcess pid
                     ex_code `seq` return ()
                 Nothing  -> return ()
@@ -108,6 +109,18 @@ processPromiseCallback callback cmd args input = do
 
     return Promise {..}
 
+-- from http://stackoverflow.com/questions/8820903
+terminateProcess9 :: ProcessHandle -> IO ()
+terminateProcess9 ph = do
+#if __GLASGOW_HASKELL__ >= 708
+    let ProcessHandle pmvar _ = ph
+#else
+    let ProcessHandle pmvar = ph
+#endif
+    posixh <- readMVar pmvar
+    case posixh of
+        OpenHandle pid -> signalProcess 9 pid
+        _ -> return ()
 
 -- | Make a `Promise`
 processPromise

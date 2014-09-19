@@ -1,11 +1,10 @@
 {-# OPTIONS_GHC -fno-warn-orphans #-}
-{-# LANGUAGE RecordWildCards, GeneralizedNewtypeDeriving, ViewPatterns, Rank2Types #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving, ViewPatterns #-}
 
 import Control.Applicative
-import Control.Concurrent
-import Control.Concurrent.STM
 import Control.Concurrent.STM.DTVar
 import Control.Concurrent.STM.Promise
+import Control.Concurrent.STM.Promise.Process
 import Control.Concurrent.STM.Promise.Tree
 import Control.Concurrent.STM.Promise.Workers
 import Control.Monad
@@ -17,6 +16,7 @@ import System.Exit
 import Test.QuickCheck
 import Test.QuickCheck.Monadic
 import Test.QuickCheck.Test
+import System.IO
 
 nubSorted :: Ord a => [a] -> [a]
 nubSorted = map head . group . sort
@@ -54,7 +54,10 @@ instance Arbitrary a => Arbitrary (Tree a) where
           where
             attempts u v = Node Both (Recoverable u) (Recoverable v)
 
+delayPromise :: a -> Int -> IO (Promise a)
+delayPromise a _ = fmap (fmap (const a)) (processPromise "sleep" ["0.001"] "")
 
+{-
 delayPromise :: a -> Int -> IO (Promise a)
 delayPromise b t = do
 
@@ -73,6 +76,7 @@ delayPromise b t = do
         result = readTVar res_var
 
     return Promise{..}
+    -}
 
 mkPromiseTree :: Arbitrary a => Int -> Tree a -> Gen (IO (Tree (Promise a)))
 mkPromiseTree timeout = go where
@@ -88,9 +92,9 @@ type Tester' a = Tree (Promise a) -> [a] -> IO Bool
 
 prop_equal :: (Show a,Ord a,Arbitrary a,Monoid a) =>
               a -> Tester' a -> Int -> Int -> Tree a -> Property
-prop_equal _ tester cores timeout tree = do
-    io_promise_tree <- mkPromiseTree timeout tree
-    monadicIO $ assert <=< run $ do
+prop_equal _ tester cores timeout tree = monadicIO $ do
+    Blind io_promise_tree <- pick (fmap Blind (mkPromiseTree timeout tree))
+    assert <=< run $ do
         let evaluations = eval tree
         putStrLn "== New test =="
         putStrLn (showTree tree)
@@ -125,7 +129,7 @@ runTest a size tester = do
     tests <- newIORef (0 :: Int)
     let tester' = tester (modifyIORef tests succ) (modifyIORef cancelled succ)
     res <- quickCheckWithResult stdArgs { maxSuccess = 1000, maxSize = size }
-        (prop_equal a tester' 10 10000)
+        (prop_equal a tester' 1 10000)
     ts <- readIORef tests
     cs <- readIORef cancelled
     return ((ts,cs),isSuccess res)
@@ -133,11 +137,19 @@ runTest a size tester = do
 
 main :: IO ()
 main = do
+    hSetBuffering System.IO.stdout NoBuffering
     (times,tests) <- unzip <$> sequence
-        [ runTest (undefined :: Desc Int) 25 testEvalTree
-        , runTest (undefined :: Int)      50 testEvalTree
-        , runTest (undefined :: Desc Int) 25 testWatchTree
-        , runTest (undefined :: Int)      50 testWatchTree
+        [ runTest (undefined :: Int) 10 testEvalTree
+        , runTest (undefined :: Int) 11 testEvalTree
+        , runTest (undefined :: Int) 12 testEvalTree
+        , runTest (undefined :: Int) 13 testEvalTree
+        , runTest (undefined :: Int) 14 testEvalTree
+        , runTest (undefined :: Int) 15 testEvalTree
+        , runTest (undefined :: Int) 20 testEvalTree
+        , runTest (undefined :: Int) 25 testEvalTree
+        , runTest (undefined :: Int) 50 testEvalTree
+        , runTest (undefined :: Desc Int) 15 testWatchTree
+        , runTest (undefined :: Int)      30 testWatchTree
         ]
     forM_ times $ \(ts,cs) -> putStrLn $ show ts ++ " tests, " ++ show cs ++ " cancelled."
     unless (and tests) exitFailure

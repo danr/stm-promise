@@ -16,6 +16,7 @@ module Control.Concurrent.STM.Promise.Tree
 
 import Control.Monad hiding (mapM_)
 import Prelude hiding (mapM_, foldr1, concatMap, concat)
+import Control.Applicative
 import Control.Concurrent
 import Control.Concurrent.STM
 import Control.Concurrent.STM.DTVar
@@ -52,6 +53,10 @@ instance Monad Tree where
     Leaf x >>= f        = f x
     Node l u v >>= f    = Node l (u >>= f) (v >>= f)
     Recoverable t >>= f = Recoverable (t >>= f)
+
+instance Applicative Tree where
+    pure  = return
+    (<*>) = ap
 
 -- | Passes a list along if it is nonempty, otherwise raises an error message
 ensureNonempty :: String -> [a] -> [a]
@@ -167,7 +172,6 @@ evalTree failure t00 = do
                         res        -> return res
 
                 cancelTree t0
-
                 write res
 
         -- | Invariant: never write Unfinished

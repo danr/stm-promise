@@ -1,6 +1,6 @@
 name:               stm-promise
 category:           Concurrency
-version:            0.0.2.1
+version:            0.0.3.0
 license:            LGPL-3
 license-file:       LICENSE
 author:             Dan Rosén
@@ -9,7 +9,7 @@ homepage:           http://www.github.com/danr/stm-promise
 bug-reports:        http://www.github.com/danr/stm-promise/issues
 build-type:         Simple
 cabal-version:      >=1.8
-tested-with:        GHC == 7.4.1, GHC == 7.6.1
+tested-with:        GHC == 7.8.3, GHC == 7.6.3, GHC == 7.4.2
 synopsis:           Simple STM Promises for IO computations and external processes
 description:
     Simple STM Promises for IO computations and external processes. Experimental release.
@@ -104,14 +104,8 @@ source-repository head
   type: git
   location: git://github.com/danr/stm-promise.git
 
-flag Werror
-  default: False
-  manual: True
-
 library
   ghc-options:         -Wall
-  if flag(Werror)
-    ghc-options: -Werror
 
   exposed-modules:
     Control.Concurrent.STM.Promise,
@@ -132,12 +126,10 @@ test-suite trees
   main-is:        Trees.hs
   hs-source-dirs: test
   ghc-options:    -Wall
-  if flag(Werror)
-    ghc-options: -Werror
 
   build-depends:
     base,
-    stm-promise               == 0.0.2.1,
+    stm-promise               == 0.0.3.0,
     stm                       >= 2.3,
     QuickCheck                >= 2.4
 

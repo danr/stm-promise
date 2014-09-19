@@ -1,5 +1,4 @@
 -- | TVars with a dirty bit that allows for one listener
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 module Control.Concurrent.STM.DTVar
     ( DTVar
     , newDTVar

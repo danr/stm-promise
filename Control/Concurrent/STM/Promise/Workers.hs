@@ -14,24 +14,24 @@ maybeIO m f = maybe (return Nothing) (fmap Just . f) m
 evaluatePromise :: Maybe Int -> Promise a -> IO ()
 evaluatePromise m_t promise = do
 
-    m_thr <- maybeIO m_t $ \ timeout -> forkIO $ do
+    _m_thr <- maybeIO m_t $ \ timeout -> forkIO $ do
         threadDelay timeout
         cancel promise
 
-    spawn promise
+    _s_thr <- forkIO $ spawn promise
 
     atomically $ do
         status <- result promise
         when (isUnfinished status) retry
-
-    void $ maybeIO m_thr killThread
 
 -- | Evaluates a channel of promises, maybe using a timeout in microseconds.
 --   Stops when the channel is empty.
 worker :: Maybe Int -> TChan (Promise a) -> IO ()
 worker m_t ch = go where
     go = do
+        -- putStr "t"
         m_promise <- atomically $ tryReadTChan ch
+        -- putStr "T"
         case m_promise of
             Just promise -> evaluatePromise m_t promise >> go
             Nothing -> return ()
