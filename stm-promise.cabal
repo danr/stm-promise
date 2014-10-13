@@ -129,7 +129,7 @@ test-suite trees
 
   build-depends:
     base,
-    stm-promise               == 0.0.3.0,
+    stm-promise,
     stm                       >= 2.3,
     QuickCheck                >= 2.4
 

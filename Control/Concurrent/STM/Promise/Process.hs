@@ -51,7 +51,7 @@ processPromiseCallback callback cmd args input = do
             -- Check that the process hasn't been spawned before
             spawn_now <- atomically $ swapTVar spawn_ok False
 
-            when spawn_now $ silent $ do
+            when spawn_now $ do
 
                 (Just inh, Just outh, Just errh, pid) <- createProcess $
                     (proc cmd args)
@@ -63,10 +63,10 @@ processPromiseCallback callback cmd args input = do
                 atomically $ writeTVar pid_var (Just pid)
 
                 unless (null input) $ do
-                    hPutStr inh input
-                    hFlush inh
+                    silent (hPutStr inh input)
+                    silent (hFlush inh)
 
-                hClose inh
+                silent (hClose inh)
 
                 let go = do
                     ex_code <- waitForProcess pid
@@ -75,8 +75,8 @@ processPromiseCallback callback cmd args input = do
                     a <- evaluate (length out)
                     b <- evaluate (length err)
                     a `seq` b `seq` do
-                        hClose outh
-                        hClose errh
+                        silent (hClose outh)
+                        silent (hClose errh)
                         let res = ProcessResult
                                 { stderr = err
                                 , stdout = out
