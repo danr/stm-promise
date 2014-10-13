@@ -1,6 +1,6 @@
 name:               stm-promise
 category:           Concurrency
-version:            0.0.3.0
+version:            0.0.3.1
 license:            LGPL-3
 license-file:       LICENSE
 author:             Dan Rosén

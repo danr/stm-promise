@@ -1,4 +1,4 @@
-{-# LANGUAGE RecordWildCards, CPP #-}
+{-# LANGUAGE RecordWildCards, CPP, ScopedTypeVariables #-}
 -- | Promises for processes
 module Control.Concurrent.STM.Promise.Process
     ( processPromise, processPromiseCallback
@@ -15,6 +15,7 @@ import Control.Exception
 
 import System.Process
 import System.IO
+import System.IO.Error
 import System.Exit
 
 import System.Process.Internals
@@ -43,14 +44,14 @@ processPromiseCallback callback cmd args input = do
     result_var <- newTVarIO Unfinished
     spawn_ok   <- newTVarIO True
 
-    let silent io = io `catchError` const (return ()) -- (\ e -> print e)
+    let silent io = io `catchError` const (return ())
 
         spawn = do
 
             -- Check that the process hasn't been spawned before
             spawn_now <- atomically $ swapTVar spawn_ok False
 
-            when spawn_now $ do
+            when spawn_now $ silent $ do
 
                 (Just inh, Just outh, Just errh, pid) <- createProcess $
                     (proc cmd args)
